@@ -2,6 +2,7 @@ import { SpotifyApi } from '../utils/api.js';
 import {
   TrackArgs,
   RecommendationsArgs,
+  UserTopTracksArgs,
 } from '../types/tracks.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
@@ -56,5 +57,24 @@ export class TracksHandler {
 
   async getAvailableGenres() {
     return this.api.makeRequest('/recommendations/available-genre-seeds');
+  }
+
+  async getUserTopTracks(args: UserTopTracksArgs) {
+    const { time_range = 'medium_term', limit = 20, offset = 0 } = args;
+
+    if (limit < 1 || limit > 50) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'Limit must be between 1 and 50'
+      );
+    }
+
+    const params = {
+      time_range,
+      limit,
+      offset
+    };
+
+    return this.api.makeRequest(`/me/top/tracks${this.api.buildQueryString(params)}`);
   }
 }

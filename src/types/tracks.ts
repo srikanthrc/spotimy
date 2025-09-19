@@ -12,3 +12,9 @@ export interface RecommendationsArgs {
 export interface GenreSeedsResponse {
   genres: string[];
 }
+
+export interface UserTopTracksArgs {
+  time_range?: 'short_term' | 'medium_term' | 'long_term';
+  limit?: number;
+  offset?: number;
+}
