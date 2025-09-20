@@ -140,6 +140,17 @@ To run tests in watch mode during development:
 npm run test:watch
 ```
 
+### HTTP Transport
+
+For advanced use cases, this server also supports HTTP transport with integrated OAuth functionality. See [README_HTTP_TRANSPORT.md](./README_HTTP_TRANSPORT.md) for detailed information about:
+
+- MCP Streamable HTTP transport setup
+- Integrated Spotify OAuth flow
+- Real-time token validation
+- Dynamic environment loading
+- Browser-based authorization
+- Comprehensive testing
+
 ### Contributing
 
 To contribute:

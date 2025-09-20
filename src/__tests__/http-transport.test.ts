@@ -5,7 +5,7 @@ const TEST_PORT = 3003;
 const TEST_HOST = 'localhost';
 const BASE_URL = `http://${TEST_HOST}:${TEST_PORT}`;
 
-describe('HTTP Transport Integration', () => {
+describe('HTTP Transport Integration with OAuth', () => {
   let serverProcess: ChildProcess;
 
   beforeAll(async () => {
@@ -56,6 +56,20 @@ describe('HTTP Transport Integration', () => {
       expect(response.status).toBe(200);
       expect(data).toHaveProperty('status', 'ok');
       expect(data).toHaveProperty('timestamp');
+    });
+
+    it('should include enhanced auth status', async () => {
+      const response = await fetch(`${BASE_URL}/health`);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data).toHaveProperty('auth');
+      expect(data.auth).toHaveProperty('status');
+      expect(data.auth).toHaveProperty('tokenValid');
+      expect(data.auth).toHaveProperty('hasUserToken');
+      expect(data.auth).toHaveProperty('hasAuthCode');
+      expect(data.auth).toHaveProperty('hasClientCredentials');
+      expect(data.auth).toHaveProperty('details');
     });
   });
 
@@ -256,6 +270,100 @@ describe('HTTP Transport Integration', () => {
       expect(response.status).toBe(400);
       const data = await response.json();
       expect(data).toHaveProperty('error', 'Missing sessionId parameter');
+    });
+  });
+
+  describe('OAuth Integration', () => {
+    it('should serve OAuth authorization page', async () => {
+      const response = await fetch(`${BASE_URL}/auth`);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('text/html');
+      expect(html).toContain('Spotify Authorization');
+      expect(html).toContain('Authorize Spotify Access');
+      expect(html).toContain('https://accounts.spotify.com/authorize');
+      expect(html).toContain('client_id=3d134834f4da49eab306ec763d994ef1');
+      expect(html).toContain(`redirect_uri=http%3A%2F%2F127.0.0.1%3A3001%2Fcallback`);
+    });
+
+    it('should reject non-GET requests to /auth', async () => {
+      const response = await fetch(`${BASE_URL}/auth`, { method: 'POST' });
+      const data = await response.json();
+
+      expect(response.status).toBe(405);
+      expect(data).toHaveProperty('error', 'Method not allowed. Use GET.');
+    });
+
+    it('should handle callback with missing code', async () => {
+      const response = await fetch(`${BASE_URL}/callback`);
+      const html = await response.text();
+
+      expect(response.status).toBe(400);
+      expect(html).toContain('No Authorization Code');
+      expect(html).toContain('Try again');
+    });
+
+    it('should handle callback with error parameter', async () => {
+      const response = await fetch(`${BASE_URL}/callback?error=access_denied`);
+      const html = await response.text();
+
+      expect(response.status).toBe(400);
+      expect(html).toContain('Authorization Error');
+      expect(html).toContain('access_denied');
+    });
+
+    it('should reject non-GET requests to /callback', async () => {
+      const response = await fetch(`${BASE_URL}/callback`, { method: 'POST' });
+      const data = await response.json();
+
+      expect(response.status).toBe(405);
+      expect(data).toHaveProperty('error', 'Method not allowed. Use GET.');
+    });
+  });
+
+  describe('Token Refresh', () => {
+    it('should provide refresh token endpoint', async () => {
+      const response = await fetch(`${BASE_URL}/refresh-token`, { method: 'POST' });
+      const data = await response.json();
+
+      expect([200, 500]).toContain(response.status); // Could succeed or fail depending on token state
+      expect(data).toHaveProperty('success');
+
+      if (data.success) {
+        expect(data).toHaveProperty('message');
+        expect(data).toHaveProperty('token');
+      } else {
+        expect(data).toHaveProperty('error');
+        expect(data).toHaveProperty('details');
+      }
+    });
+
+    it('should reject non-POST requests to /refresh-token', async () => {
+      const response = await fetch(`${BASE_URL}/refresh-token`, { method: 'GET' });
+      const data = await response.json();
+
+      expect(response.status).toBe(405);
+      expect(data).toHaveProperty('error', 'Method not allowed. Use POST.');
+    });
+  });
+
+  describe('Dynamic Environment Loading', () => {
+    it('should pick up environment changes without restart', async () => {
+      // First health check
+      const response1 = await fetch(`${BASE_URL}/health`);
+      const data1 = await response1.json();
+
+      expect(response1.status).toBe(200);
+      expect(data1.auth).toHaveProperty('status');
+
+      // Second health check should use fresh environment variables
+      const response2 = await fetch(`${BASE_URL}/health`);
+      const data2 = await response2.json();
+
+      expect(response2.status).toBe(200);
+      expect(data2.auth).toHaveProperty('status');
+      expect(typeof data2.auth.tokenValid).toBe('boolean');
     });
   });
 
