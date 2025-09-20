@@ -145,3 +145,12 @@ bun src/index.ts
 ```
 
 This allows you to support both local stdio clients and remote HTTP clients at the same time.
+
+## Auth token refresh:
+MCP server has hot-reload capability for Spotify tokens. 
+### 1. Start MCP server once
+  bun run mcp:http
+### 2. Update tokens anytime without restart
+  bun src/refresh-token.js  # Gets fresh tokens
+### 3. Tokens are immediately available
+  curl http://localhost:3001/health  # Shows fresh token status

@@ -1,7 +1,7 @@
 import { EventSource } from 'eventsource';
 import { spawn, ChildProcess } from 'node:child_process';
 
-const TEST_PORT = 3002;
+const TEST_PORT = 3003;
 const TEST_HOST = 'localhost';
 const BASE_URL = `http://${TEST_HOST}:${TEST_PORT}`;
 
@@ -86,7 +86,7 @@ describe('HTTP Transport Integration', () => {
           const url = new URL(endpoint);
           const sessionId = url.searchParams.get('sessionId');
 
-          expect(endpoint).toMatch(/^http:\/\/localhost:3002\/mcp\?sessionId=/);
+          expect(endpoint).toMatch(/^http:\/\/localhost:3003\/mcp\?sessionId=/);
           expect(sessionId).toBeTruthy();
           expect(sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 

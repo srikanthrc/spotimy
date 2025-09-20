@@ -978,8 +978,141 @@ class SpotifyHttpServer {
 
         // Health check endpoint
         if (url.pathname === '/health') {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }));
+          try {
+            // Check Spotify auth status (get fresh env vars)
+            await this.authManager.getAccessToken(); // This will refresh env vars
+            const hasUserToken = !!process.env.SPOTIFY_USER_ACCESS_TOKEN;
+            const hasAuthCode = !!process.env.SPOTIFY_AUTH_CODE;
+            const hasClientCredentials = !!(process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET);
+
+            let authStatus = 'No authentication';
+            let authDetails: any = {};
+            let tokenValid = false;
+
+            if (hasUserToken) {
+              // Test if the user token is still valid by making a simple API call
+              try {
+                const token = await this.authManager.getAccessToken();
+                const testResponse = await fetch('https://api.spotify.com/v1/me', {
+                  headers: {
+                    'Authorization': `Bearer ${token}`
+                  }
+                });
+
+                if (testResponse.ok) {
+                  const userData = await testResponse.json();
+                  authStatus = 'User token active';
+                  tokenValid = true;
+                  authDetails = {
+                    userToken: `${process.env.SPOTIFY_USER_ACCESS_TOKEN?.substring(0, 20)}...`,
+                    userId: userData.id,
+                    displayName: userData.display_name,
+                    hasAuthCode: hasAuthCode,
+                    authCode: hasAuthCode ? `${process.env.SPOTIFY_AUTH_CODE?.substring(0, 20)}...` : null
+                  };
+                } else {
+                  authStatus = 'User token expired/invalid';
+                  authDetails = {
+                    userToken: `${process.env.SPOTIFY_USER_ACCESS_TOKEN?.substring(0, 20)}...`,
+                    error: `HTTP ${testResponse.status}: ${testResponse.statusText}`,
+                    hasAuthCode: hasAuthCode
+                  };
+                }
+              } catch (error) {
+                authStatus = 'User token error';
+                authDetails = {
+                  userToken: `${process.env.SPOTIFY_USER_ACCESS_TOKEN?.substring(0, 20)}...`,
+                  error: error instanceof Error ? error.message : String(error),
+                  hasAuthCode: hasAuthCode
+                };
+              }
+            } else if (hasClientCredentials) {
+              // Test client credentials
+              try {
+                const token = await this.authManager.getAccessToken();
+                const testResponse = await fetch('https://api.spotify.com/v1/browse/categories?limit=1', {
+                  headers: {
+                    'Authorization': `Bearer ${token}`
+                  }
+                });
+
+                if (testResponse.ok) {
+                  authStatus = 'Client credentials active';
+                  tokenValid = true;
+                  authDetails = {
+                    clientId: process.env.SPOTIFY_CLIENT_ID?.substring(0, 8) + '...',
+                    hasClientSecret: !!process.env.SPOTIFY_CLIENT_SECRET,
+                    scope: 'App-only access'
+                  };
+                } else {
+                  authStatus = 'Client credentials invalid';
+                  authDetails = {
+                    clientId: process.env.SPOTIFY_CLIENT_ID?.substring(0, 8) + '...',
+                    error: `HTTP ${testResponse.status}: ${testResponse.statusText}`
+                  };
+                }
+              } catch (error) {
+                authStatus = 'Client credentials error';
+                authDetails = {
+                  clientId: process.env.SPOTIFY_CLIENT_ID?.substring(0, 8) + '...',
+                  error: error instanceof Error ? error.message : String(error)
+                };
+              }
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              status: 'ok',
+              message: 'Spotimy MCP Server is running',
+              timestamp: new Date().toISOString(),
+              auth: {
+                status: authStatus,
+                tokenValid,
+                hasUserToken,
+                hasAuthCode,
+                hasClientCredentials,
+                details: authDetails
+              }
+            }));
+          } catch (error) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              status: 'ok',
+              message: 'Spotimy MCP Server is running',
+              timestamp: new Date().toISOString(),
+              auth: {
+                status: 'Error checking auth',
+                tokenValid: false,
+                error: error instanceof Error ? error.message : String(error)
+              }
+            }));
+          }
+          return;
+        }
+
+        // Token refresh endpoint
+        if (url.pathname === '/refresh-token') {
+          if (req.method === 'POST') {
+            try {
+              const refreshed = await this.authManager.refreshToken();
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: true,
+                message: 'Token refreshed successfully',
+                token: refreshed ? 'Updated' : 'Already valid'
+              }));
+            } catch (error) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: false,
+                error: 'Failed to refresh token',
+                details: error instanceof Error ? error.message : String(error)
+              }));
+            }
+          } else {
+            res.writeHead(405, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }));
+          }
           return;
         }
 
@@ -1005,6 +1138,7 @@ class SpotifyHttpServer {
           } else if (req.method === 'POST') {
             // Handle incoming messages
             const sessionId = url.searchParams.get('sessionId');
+
             if (!sessionId) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Missing sessionId parameter' }));
@@ -1043,9 +1177,10 @@ class SpotifyHttpServer {
       this.httpServer.listen(port, host, () => {
         console.error(`Spotify MCP HTTP server running on http://${host}:${port}`);
         console.error('Endpoints:');
-        console.error('  GET  /mcp     - MCP SSE connection');
-        console.error('  POST /mcp     - MCP message endpoint');
-        console.error('  GET  /health  - Health check');
+        console.error('  GET  /mcp           - MCP SSE connection');
+        console.error('  POST /mcp           - MCP message endpoint');
+        console.error('  GET  /health        - Health check');
+        console.error('  POST /refresh-token - Refresh Spotify access token');
         resolve();
       });
 
@@ -1079,8 +1214,14 @@ if (import.meta.main) {
   const portArg = args.find(arg => arg.startsWith('--port='));
   const hostArg = args.find(arg => arg.startsWith('--host='));
 
-  const port = portArg ? parseInt(portArg.split('=')[1], 10) : 3000;
-  const host = hostArg ? hostArg.split('=')[1] : 'localhost';
+  // Get port and host from environment variables, with command line arguments taking precedence
+  const port = portArg
+    ? parseInt(portArg.split('=')[1], 10)
+    : parseInt(process.env.HTTP_PORT || '3000', 10);
+
+  const host = hostArg
+    ? hostArg.split('=')[1]
+    : process.env.HTTP_HOST || 'localhost';
 
   const server = new SpotifyHttpServer();
   server.listen(port, host).catch(console.error);
