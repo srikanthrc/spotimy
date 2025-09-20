@@ -981,100 +981,14 @@ class SpotifyHttpServer {
         // Health check endpoint
         if (url.pathname === '/health') {
           try {
-            // Check Spotify auth status (get fresh env vars)
-            await this.authManager.getAccessToken(); // This will refresh env vars
-            const hasUserToken = !!process.env.SPOTIFY_USER_ACCESS_TOKEN;
-            const hasAuthCode = !!process.env.SPOTIFY_AUTH_CODE;
-            const hasClientCredentials = !!(process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET);
-
-            let authStatus = 'No authentication';
-            let authDetails: any = {};
-            let tokenValid = false;
-
-            if (hasUserToken) {
-              // Test if the user token is still valid by making a simple API call
-              try {
-                const token = await this.authManager.getAccessToken();
-                const testResponse = await fetch('https://api.spotify.com/v1/me', {
-                  headers: {
-                    'Authorization': `Bearer ${token}`
-                  }
-                });
-
-                if (testResponse.ok) {
-                  const userData = await testResponse.json();
-                  authStatus = 'User token active';
-                  tokenValid = true;
-                  authDetails = {
-                    userToken: `${process.env.SPOTIFY_USER_ACCESS_TOKEN?.substring(0, 20)}...`,
-                    userId: userData.id,
-                    displayName: userData.display_name,
-                    hasAuthCode: hasAuthCode,
-                    authCode: hasAuthCode ? `${process.env.SPOTIFY_AUTH_CODE?.substring(0, 20)}...` : null
-                  };
-                } else {
-                  authStatus = 'User token expired/invalid';
-                  authDetails = {
-                    userToken: `${process.env.SPOTIFY_USER_ACCESS_TOKEN?.substring(0, 20)}...`,
-                    error: `HTTP ${testResponse.status}: ${testResponse.statusText}`,
-                    hasAuthCode: hasAuthCode
-                  };
-                }
-              } catch (error) {
-                authStatus = 'User token error';
-                authDetails = {
-                  userToken: `${process.env.SPOTIFY_USER_ACCESS_TOKEN?.substring(0, 20)}...`,
-                  error: error instanceof Error ? error.message : String(error),
-                  hasAuthCode: hasAuthCode
-                };
-              }
-            } else if (hasClientCredentials) {
-              // Test client credentials
-              try {
-                const token = await this.authManager.getAccessToken();
-                const testResponse = await fetch('https://api.spotify.com/v1/browse/categories?limit=1', {
-                  headers: {
-                    'Authorization': `Bearer ${token}`
-                  }
-                });
-
-                if (testResponse.ok) {
-                  authStatus = 'Client credentials active';
-                  tokenValid = true;
-                  authDetails = {
-                    clientId: process.env.SPOTIFY_CLIENT_ID?.substring(0, 8) + '...',
-                    hasClientSecret: !!process.env.SPOTIFY_CLIENT_SECRET,
-                    scope: 'App-only access'
-                  };
-                } else {
-                  authStatus = 'Client credentials invalid';
-                  authDetails = {
-                    clientId: process.env.SPOTIFY_CLIENT_ID?.substring(0, 8) + '...',
-                    error: `HTTP ${testResponse.status}: ${testResponse.statusText}`
-                  };
-                }
-              } catch (error) {
-                authStatus = 'Client credentials error';
-                authDetails = {
-                  clientId: process.env.SPOTIFY_CLIENT_ID?.substring(0, 8) + '...',
-                  error: error instanceof Error ? error.message : String(error)
-                };
-              }
-            }
+            const authStatus = await this.authManager.getAuthStatus();
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               status: 'ok',
               message: 'SpotiMy MCP Server is running',
               timestamp: new Date().toISOString(),
-              auth: {
-                status: authStatus,
-                tokenValid,
-                hasUserToken,
-                hasAuthCode,
-                hasClientCredentials,
-                details: authDetails
-              }
+              auth: authStatus
             }));
           } catch (error) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1085,6 +999,10 @@ class SpotifyHttpServer {
               auth: {
                 status: 'Error checking auth',
                 tokenValid: false,
+                hasUserToken: false,
+                hasRefreshToken: false,
+                hasAuthCode: false,
+                hasClientCredentials: false,
                 error: error instanceof Error ? error.message : String(error)
               }
             }));
@@ -1095,29 +1013,8 @@ class SpotifyHttpServer {
         // OAuth authorization endpoint
         if (url.pathname === '/auth') {
           if (req.method === 'GET') {
-            const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || '3d134834f4da49eab306ec763d994ef1';
-            const REDIRECT_URI = `http://127.0.0.1:3001/callback`;
-            const SCOPES = 'playlist-read-private playlist-read-collaborative user-read-private user-top-read';
-            const AUTH_URL = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}`;
-
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(`
-              <html>
-                <head><title>Spotify Authorization</title></head>
-                <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-                  <h1>🎵 Spotify Authorization</h1>
-                  <p>Click the button below to authorize the MCP server to access your Spotify data:</p>
-                  <p><a href="${AUTH_URL}" style="background: #1db954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 25px; font-weight: bold;">Authorize Spotify Access</a></p>
-                  <p style="margin-top: 30px; color: #666; font-size: 12px;">
-                    This will redirect you to Spotify's authorization page.<br>
-                    After authorization, you'll be redirected back to this server.
-                  </p>
-                  <p style="margin-top: 20px; color: #999; font-size: 11px;">
-                    Authorization URL: <code style="background: #f5f5f5; padding: 2px 4px;">${AUTH_URL}</code>
-                  </p>
-                </body>
-              </html>
-            `);
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(this.authManager.getAuthorizationPageHtml());
           } else {
             res.writeHead(405, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
@@ -1132,13 +1029,13 @@ class SpotifyHttpServer {
             const error = url.searchParams.get('error');
 
             if (error) {
-              res.writeHead(400, { 'Content-Type': 'text/html' });
+              res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
               res.end(`
                 <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
                     <h1 style="color: #e22134;">❌ Authorization Error</h1>
                     <p>Error: ${error}</p>
-                    <p>You can close this window and try again.</p>
+                    <p>You can close this window and <a href="/auth" style="color: #1db954;">try again</a>.</p>
                   </body>
                 </html>
               `);
@@ -1146,13 +1043,13 @@ class SpotifyHttpServer {
             }
 
             if (!code) {
-              res.writeHead(400, { 'Content-Type': 'text/html' });
+              res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
               res.end(`
                 <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
                     <h1>❌ No Authorization Code</h1>
                     <p>No authorization code was provided in the callback.</p>
-                    <p><a href="/auth">Try again</a></p>
+                    <p><a href="/auth" style="color: #1db954;">Try again</a></p>
                   </body>
                 </html>
               `);
@@ -1160,74 +1057,36 @@ class SpotifyHttpServer {
             }
 
             try {
-              // Update .env file with new auth code
-              const envPath = path.join(process.cwd(), '.env');
-              const envContent = fs.readFileSync(envPath, 'utf8');
-              const updatedEnv = envContent.replace(
-                /SPOTIFY_AUTH_CODE="[^"]*"/,
-                `SPOTIFY_AUTH_CODE="${code}"`
-              );
-              fs.writeFileSync(envPath, updatedEnv);
+              const tokenResult = await this.authManager.exchangeCodeForTokens(code);
 
-              // Exchange code for access token
-              const response = await fetch('https://accounts.spotify.com/api/token', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                body: new URLSearchParams({
-                  grant_type: 'authorization_code',
-                  code: code,
-                  redirect_uri: `http://127.0.0.1:3001/callback`,
-                  client_id: process.env.SPOTIFY_CLIENT_ID!,
-                  client_secret: process.env.SPOTIFY_CLIENT_SECRET!
-                })
-              });
-
-              if (!response.ok) {
-                throw new Error(`Token exchange failed: ${response.status} ${response.statusText}`);
-              }
-
-              const tokenData = await response.json();
-
-              if (!tokenData.access_token) {
-                throw new Error('No access token received');
-              }
-
-              // Update .env with new access token
-              const newEnvContent = fs.readFileSync(envPath, 'utf8');
-              const finalEnv = newEnvContent.replace(
-                /SPOTIFY_USER_ACCESS_TOKEN="[^"]*"/,
-                `SPOTIFY_USER_ACCESS_TOKEN="${tokenData.access_token}"`
-              );
-              fs.writeFileSync(envPath, finalEnv);
-
-              res.writeHead(200, { 'Content-Type': 'text/html' });
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
               res.end(`
                 <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
                     <h1 style="color: #1db954;">✅ Authorization Successful!</h1>
-                    <p>Your Spotify access token has been updated and is ready to use.</p>
+                    <p>Your Spotify tokens have been saved and are ready to use.</p>
                     <p>You can now close this window and use the MCP server.</p>
-                    <p style="margin-top: 30px; color: #666;">
-                      Access Token: ${tokenData.access_token.substring(0, 20)}...
-                    </p>
+                    <div style="background: #282828; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                      <p><strong>Access Token:</strong> ${tokenResult.accessToken.substring(0, 20)}...</p>
+                      <p><strong>Expires in:</strong> ${Math.floor(tokenResult.expiresIn / 60)} minutes</p>
+                      <p><strong>Refresh Token:</strong> Available</p>
+                    </div>
                     <p style="margin-top: 20px;">
-                      <a href="/health" style="background: #1db954; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px;">Check Server Status</a>
+                      <a href="/health" style="background: #1db954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 25px; font-weight: bold;">Check Server Status</a>
                     </p>
                   </body>
                 </html>
               `);
 
             } catch (error) {
-              res.writeHead(500, { 'Content-Type': 'text/html' });
+              res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
               res.end(`
                 <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
                     <h1 style="color: #e22134;">❌ Token Exchange Error</h1>
                     <p>Failed to exchange authorization code for access token.</p>
-                    <p style="color: #666;">Error: ${error instanceof Error ? error.message : String(error)}</p>
-                    <p><a href="/auth">Try again</a></p>
+                    <p style="color: #999;">Error: ${error instanceof Error ? error.message : String(error)}</p>
+                    <p><a href="/auth" style="color: #1db954;">Try again</a></p>
                   </body>
                 </html>
               `);
@@ -1243,12 +1102,12 @@ class SpotifyHttpServer {
         if (url.pathname === '/refresh-token') {
           if (req.method === 'POST') {
             try {
-              const refreshed = await this.authManager.refreshToken();
+              const newToken = await this.authManager.refreshAccessToken();
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
                 success: true,
                 message: 'Token refreshed successfully',
-                token: refreshed ? 'Updated' : 'Already valid'
+                token: newToken.substring(0, 20) + '...'
               }));
             } catch (error) {
               res.writeHead(500, { 'Content-Type': 'application/json' });
