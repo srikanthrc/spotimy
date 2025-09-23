@@ -118,6 +118,16 @@ npx -y @thomaswawra/artistlens
 
 This project is open source and available on GitHub at [https://github.com/superseoworld/artistlens](https://github.com/superseoworld/artistlens).
 
+## Documentation
+
+- Overview: [docs/index.md](docs/index.md)
+- Quickstart: [docs/quickstart.md](docs/quickstart.md)
+- MCP Tools Reference: [docs/mcp-tools.md](docs/mcp-tools.md)
+- Programmatic API (Handlers): [docs/handlers.md](docs/handlers.md)
+- Utilities: [docs/utils.md](docs/utils.md)
+- Types: [docs/types.md](docs/types.md)
+- Examples & Recipes: [docs/examples.md](docs/examples.md)
+
 ### Project Structure
 
 The codebase is organized into the following directories:
