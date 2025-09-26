@@ -1,5 +1,7 @@
 # MCP HTTP Transport with Integrated OAuth
 
+> **Note**: This is a Spotify MCP server based on the original [ArtistLens](https://github.com/superseoworld/artistlens) by Thomas Wawra.
+
 The Spotify MCP server supports both traditional stdio transport and **MCP Streamable HTTP transport with fully integrated OAuth functionality**. This eliminates the need for separate callback server utilities and provides a complete, self-contained solution.
 
 ## Overview
@@ -211,9 +213,46 @@ SPOTIFY_AUTH_CODE=your_auth_code
 
 **Important**: In your Spotify App settings on the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), make sure to add `http://127.0.0.1:3001/callback` as a redirect URI (not `localhost:3001`).
 
+### Logging Configuration
+
+The Spotify MCP server uses structured logging with environment-aware output formatting:
+
+```env
+# Optional logging configuration
+LOG_LEVEL=info          # debug, info, warn, error
+NODE_ENV=development    # development (pretty) or production (JSON)
+```
+
 ### Custom Port and Host
 ```bash
 bun src/http-server.ts --port=8080 --host=0.0.0.0
+```
+
+### Logging Examples
+
+**Development Mode** (colorized, human-readable):
+```
+[23:34:29 UTC] INFO: Spotify MCP HTTP server running
+    host: "127.0.0.1"
+    port: 3001
+[23:34:30 UTC] INFO: Endpoints available:
+[23:34:30 UTC] INFO:   GET  /mcp           - MCP SSE connection
+[23:34:30 UTC] INFO:   POST /mcp          - MCP message endpoint
+[23:34:30 UTC] INFO:   GET  /health       - Health check
+[23:34:30 UTC] INFO:   GET  /auth         - Start Spotify OAuth flow
+[23:34:30 UTC] INFO:   GET  /callback     - Spotify OAuth callback
+[23:34:30 UTC] INFO:   POST /refresh-token - Refresh Spotify access token
+```
+
+**Production Mode** (structured JSON for log aggregation):
+```bash
+NODE_ENV=production bun run mcp:http
+```
+Output:
+```json
+{"level":30,"time":"2025-09-25T23:34:29.123Z","msg":"Spotify MCP HTTP server running","host":"127.0.0.1","port":3001}
+{"level":30,"time":"2025-09-25T23:34:30.456Z","msg":"Endpoints available:"}
+{"level":30,"time":"2025-09-25T23:34:31.789Z","msg":"  GET  /mcp           - MCP SSE connection"}
 ```
 
 ## Transport Comparison

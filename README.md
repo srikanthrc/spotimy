@@ -1,9 +1,8 @@
-# ArtistLens
+# Spotify MCP Server
 
-[![smithery badge](https://smithery.ai/badge/@superseoworld/artistlens)](https://smithery.ai/server/@superseoworld/artistlens)
-[![npm version](https://img.shields.io/npm/v/@thomaswawra/artistlens.svg)](https://www.npmjs.com/package/@thomaswawra/artistlens)
+> **Note**: This project is based on the original [ArtistLens](https://github.com/superseoworld/artistlens) by Thomas Wawra, but has been significantly modified and is now maintained as a separate project focused on enhanced HTTP transport, OAuth integration, and modern logging capabilities.
 
-A powerful Model Context Protocol (MCP) server that provides access to the Spotify Web API. ArtistLens enables seamless interaction with Spotify's music catalog, including searching for tracks, albums, and artists, as well as accessing artist-specific information like top tracks and related artists.
+A powerful Model Context Protocol (MCP) server that provides access to the Spotify Web API. This server enables seamless interaction with Spotify's music catalog, including searching for tracks, albums, and artists, as well as accessing artist-specific information like top tracks and related artists.
 
 **Current Version:** 0.4.12
 
@@ -11,23 +10,26 @@ A powerful Model Context Protocol (MCP) server that provides access to the Spoti
 
 ## Installation
 
-### Installing via Smithery
+### Local Development Setup
 
-To install ArtistLens for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@superseoworld/artistlens):
-
-```bash
-npx -y @smithery/cli install @superseoworld/artistlens --client claude
-```
-
-### Manual Installation
-
-You can install the package globally:
+This is a development/research project. To run locally:
 
 ```bash
-npm install -g @thomaswawra/artistlens
+# Clone the repository
+git clone <repository-url>
+cd spotimy
+
+# Install dependencies
+bun install
+
+# Run in development mode
+bun run dev        # stdio transport
+bun run dev:http   # HTTP transport with OAuth
 ```
 
-Or run it directly with npx:
+### Original ArtistLens Installation
+
+For the original ArtistLens package, see the [official repository](https://github.com/superseoworld/artistlens):
 
 ```bash
 npx -y @thomaswawra/artistlens
@@ -41,8 +43,9 @@ Add to your MCP settings file (e.g., `claude_desktop_config.json` or `cline_mcp_
 {
   "mcpServers": {
     "spotify": {
-      "command": "npx",
-      "args": ["-y", "@thomaswawra/artistlens"],
+      "command": "bun",
+      "args": ["run", "dev"],
+      "cwd": "/path/to/spotimy",
       "env": {
         "SPOTIFY_CLIENT_ID": "your_client_id",
         "SPOTIFY_CLIENT_SECRET": "your_client_secret"
@@ -102,29 +105,71 @@ You'll need to provide your Spotify API credentials:
 - `get_featured_playlists`: Get a list of Spotify featured playlists with optional locale and pagination support
 - `get_category_playlists`: Get a list of Spotify playlists tagged with a particular category
 
-## Updating
+## Key Differences from Original ArtistLens
 
-To update to the latest version:
+This fork includes several enhancements:
 
-```bash
-# If installed globally
-npm update -g @thomaswawra/artistlens
-
-# If using npx, it will automatically use the latest version
-npx -y @thomaswawra/artistlens
-```
+- ✅ **Enhanced HTTP Transport** with integrated OAuth flow
+- ✅ **Modern Logging System** using Pino with structured JSON output
+- ✅ **Environment-aware Configuration** (development vs production modes)
+- ✅ **Real-time Token Validation** through health endpoints
+- ✅ **Comprehensive Error Handling** with contextual logging
+- ✅ **Single-server OAuth Integration** eliminating need for separate callback servers
 
 ## Development
 
-This project is open source and available on GitHub at [https://github.com/superseoworld/artistlens](https://github.com/superseoworld/artistlens).
+This project is a research fork based on the original ArtistLens. The original project is available at [https://github.com/superseoworld/artistlens](https://github.com/superseoworld/artistlens).
 
 ### Project Structure
 
 The codebase is organized into the following directories:
 - `src/handlers/`: Contains handler classes for different Spotify API endpoints
 - `src/types/`: TypeScript interfaces for request and response objects
-- `src/utils/`: Utility functions and classes for API communication
+- `src/utils/`: Utility functions and classes for API communication (including `logger.ts`)
 - `src/__tests__/`: Jest test files for all functionality
+
+### Logging System
+
+This Spotify MCP server uses [Pino](https://getpino.io/) for high-performance, structured logging with automatic environment detection:
+
+#### Development Mode (Pretty Formatted)
+```bash
+bun run dev        # stdio transport with pretty logs
+bun run dev:http   # HTTP transport with pretty logs
+```
+Output example:
+```
+[23:34:29 UTC] INFO: Spotify MCP HTTP server running
+    host: "127.0.0.1"
+    port: 3001
+[23:34:30 UTC] INFO: User token expired, refreshing...
+[23:34:31 UTC] INFO: Access token refreshed successfully
+```
+
+#### Production Mode (Structured JSON)
+```bash
+NODE_ENV=production bun run mcp        # stdio transport
+NODE_ENV=production bun run mcp:http   # HTTP transport
+```
+Output example:
+```json
+{"level":30,"time":"2025-09-25T23:34:29.123Z","msg":"Spotify MCP HTTP server running","host":"127.0.0.1","port":3001}
+{"level":30,"time":"2025-09-25T23:34:30.456Z","msg":"User token expired, refreshing..."}
+{"level":30,"time":"2025-09-25T23:34:31.789Z","msg":"Access token refreshed successfully"}
+```
+
+#### Log Level Control
+```bash
+LOG_LEVEL=debug bun run dev:http    # Levels: debug, info, warn, error (default: info)
+```
+
+#### Key Features
+- ✅ **Structured logging** with contextual information (user IDs, error objects, operation details)
+- ✅ **Environment-aware formatting** (colorized pretty output in dev, JSON in production)
+- ✅ **Human-readable timestamps** in ISO 8601 format
+- ✅ **Stderr output** for proper separation from application data
+- ✅ **Performance optimized** using Pino's fast logging architecture
+- ✅ **Rich context** including auth status, token information, and API responses
 
 ### Testing
 

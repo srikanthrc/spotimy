@@ -4,6 +4,7 @@ import { TokenInfo } from '../types/common.js';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import logger from './logger.js';
 
 // Don't cache these at startup - read them fresh each time
 function getEnvVars() {
@@ -43,7 +44,7 @@ if (!initialEnv.SPOTIFY_CLIENT_ID || !initialEnv.SPOTIFY_CLIENT_SECRET) {
   throw new Error('SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables are required');
 }
 
-console.error('Using Spotify User Access token:', initialEnv.SPOTIFY_USER_ACCESS_TOKEN ? 'Token provided' : 'No token');
+logger.info({ hasUserToken: !!initialEnv.SPOTIFY_USER_ACCESS_TOKEN }, 'Spotify User Access token status');
 // Note: Spotify access tokens are opaque tokens, not JWTs, so we don't validate format
 
 export class AuthManager {
@@ -93,15 +94,15 @@ export class AuthManager {
         // Token is expired/invalid, try to refresh it
         if (env.SPOTIFY_REFRESH_TOKEN) {
           try {
-            console.error('🔄 User token expired, refreshing...');
+            logger.info('User token expired, refreshing...');
             const newToken = await this.refreshAccessToken();
             return newToken;
           } catch (refreshError) {
-            console.error('❌ Failed to refresh user token:', refreshError);
+            logger.error({ error: refreshError }, 'Failed to refresh user token');
             // Fall through to client credentials as fallback
           }
         } else {
-          console.error('⚠️ User token expired and no refresh token available');
+          logger.warn('User token expired and no refresh token available');
           // Fall through to client credentials as fallback
         }
       }
@@ -114,7 +115,7 @@ export class AuthManager {
 
     // Get new client credentials token as fallback
     try {
-      console.error('🔑 Getting new client credentials token...');
+      logger.info('Getting new client credentials token...');
       const response = await axios.post('https://accounts.spotify.com/api/token',
         new URLSearchParams({
           grant_type: 'client_credentials'
@@ -244,7 +245,6 @@ export class AuthManager {
 
       // Calculate expiry timestamp
       const expiryTimestamp = Date.now() + (expires_in * 1000);
-      const expiryDate = new Date(expiryTimestamp);
 
       // Update .env file
       await this.updateEnvFile({
@@ -328,7 +328,7 @@ export class AuthManager {
       }
       await this.updateEnvFile(updateData);
 
-      console.error('✅ Access token refreshed successfully');
+      logger.info('Access token refreshed successfully');
       return access_token;
 
     } catch (error) {
@@ -352,7 +352,7 @@ export class AuthManager {
       await this.refreshAccessToken();
       return true;
     } catch (error) {
-      console.error('Failed to refresh token:', error);
+      logger.error({ error }, 'Failed to refresh token');
       return false;
     }
   }

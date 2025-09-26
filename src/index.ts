@@ -10,6 +10,7 @@ import {
 
 import { AuthManager } from './utils/auth.js';
 import { SpotifyApi } from './utils/api.js';
+import logger from './utils/logger.js';
 import { ArtistsHandler } from './handlers/artists.js';
 import { AlbumsHandler } from './handlers/albums.js';
 import { TracksHandler } from './handlers/tracks.js';
@@ -94,7 +95,7 @@ class SpotifyServer {
 
     this.setupToolHandlers();
     
-    this.server.onerror = (error) => console.error('[MCP Error]', error);
+    this.server.onerror = (error) => logger.error({ error }, 'MCP Error');
     process.on('SIGINT', async () => {
       await this.server.close();
       process.exit(0);
@@ -957,9 +958,9 @@ class SpotifyServer {
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('Spotify MCP server running on stdio');
+    logger.info('Spotify MCP server running on stdio');
   }
 }
 
 const server = new SpotifyServer();
-server.run().catch(console.error);
+server.run().catch(error => logger.error({ error }, 'Failed to start server'));

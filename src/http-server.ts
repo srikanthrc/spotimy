@@ -14,6 +14,7 @@ import {
 
 import { AuthManager } from './utils/auth.js';
 import { SpotifyApi } from './utils/api.js';
+import logger from './utils/logger.js';
 import { ArtistsHandler } from './handlers/artists.js';
 import { AlbumsHandler } from './handlers/albums.js';
 import { TracksHandler } from './handlers/tracks.js';
@@ -101,7 +102,7 @@ class SpotifyHttpServer {
     this.setupToolHandlers();
     this.setupHttpServer();
 
-    this.server.onerror = (error) => console.error('[MCP Error]', error);
+    this.server.onerror = (error) => logger.error({ error }, 'MCP Error');
 
     process.on('SIGINT', async () => {
       await this.cleanup();
@@ -986,7 +987,7 @@ class SpotifyHttpServer {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               status: 'ok',
-              message: 'SpotiMy MCP Server is running',
+              message: 'Spotify MCP Server is running',
               timestamp: new Date().toISOString(),
               auth: authStatus
             }));
@@ -994,7 +995,7 @@ class SpotifyHttpServer {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               status: 'ok',
-              message: 'SpotiMy MCP Server is running',
+              message: 'Spotify MCP Server is running',
               timestamp: new Date().toISOString(),
               auth: {
                 status: 'Error checking auth',
@@ -1137,7 +1138,7 @@ class SpotifyHttpServer {
             };
 
             transport.onerror = (error) => {
-              console.error('[SSE Error]', error);
+              logger.error({ error }, 'SSE Error');
             };
 
             // Connect the MCP server to this transport
@@ -1173,7 +1174,7 @@ class SpotifyHttpServer {
         res.end(JSON.stringify({ error: 'Not found' }));
 
       } catch (error) {
-        console.error('[HTTP Server Error]', error);
+        logger.error({ error }, 'HTTP Server Error');
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal server error' }));
       }
@@ -1183,14 +1184,14 @@ class SpotifyHttpServer {
   async listen(port: number = 3000, host: string = '127.0.0.1') {
     return new Promise<void>((resolve, reject) => {
       this.httpServer.listen(port, host, () => {
-        console.error(`SpotiMy MCP HTTP server running on http://${host}:${port}`);
-        console.error('Endpoints:');
-        console.error('  GET  /mcp           - MCP SSE connection');
-        console.error('  POST /mcp          - MCP message endpoint');
-        console.error('  GET  /health       - Health check');
-        console.error('  GET  /auth         - Start Spotify OAuth flow');
-        console.error('  GET  /callback     - Spotify OAuth callback');
-        console.error('  POST /refresh-token - Refresh Spotify access token');
+        logger.info({ host, port }, 'Spotify MCP HTTP server running');
+        logger.info('Endpoints available:');
+        logger.info('  GET  /mcp           - MCP SSE connection');
+        logger.info('  POST /mcp          - MCP message endpoint');
+        logger.info('  GET  /health       - Health check');
+        logger.info('  GET  /auth         - Start Spotify OAuth flow');
+        logger.info('  GET  /callback     - Spotify OAuth callback');
+        logger.info('  POST /refresh-token - Refresh Spotify access token');
         resolve();
       });
 
@@ -1234,7 +1235,7 @@ if (import.meta.main) {
     : process.env.HTTP_HOST || '127.0.0.1';
 
   const server = new SpotifyHttpServer();
-  server.listen(port, host).catch(console.error);
+  server.listen(port, host).catch(error => logger.error({ error }, 'Failed to start server'));
 }
 
 export default SpotifyHttpServer;

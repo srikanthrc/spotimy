@@ -5,12 +5,25 @@
  */
 
 import fetch from 'node:fetch';
+import pino from 'pino';
+
+const logger = pino({
+  level: 'info',
+  transport: {
+    target: 'pino-pretty',
+    options: {
+      colorize: true,
+      translateTime: 'HH:MM:ss Z',
+      ignore: 'pid,hostname'
+    }
+  }
+}, process.stderr);
 
 const MCP_SERVER_URL = 'http://localhost:3001';
 
 async function refreshToken() {
   try {
-    console.log('🔄 Refreshing Spotify token...');
+    logger.info('Refreshing Spotify token...');
 
     const response = await fetch(`${MCP_SERVER_URL}/refresh-token`, {
       method: 'POST',
@@ -22,23 +35,20 @@ async function refreshToken() {
     const result = await response.json();
 
     if (result.success) {
-      console.log('✅ Success:', result.message);
-      console.log('📝 Token status:', result.token);
+      logger.info({ message: result.message, token: result.token }, 'Token refresh successful');
     } else {
-      console.log('❌ Error:', result.error);
-      console.log('💡 Details:', result.details);
+      logger.error({ error: result.error, details: result.details }, 'Token refresh failed');
 
       if (result.details.includes('Authorization code expired')) {
-        console.log('\n🔗 To get a new authorization code:');
-        console.log('1. Visit: http://localhost:3001/auth');
-        console.log('2. Click "Authorize Spotify Access" and complete authorization');
-        console.log('3. Run this script again');
+        logger.info('To get a new authorization code:');
+        logger.info('1. Visit: http://localhost:3001/auth');
+        logger.info('2. Click "Authorize Spotify Access" and complete authorization');
+        logger.info('3. Run this script again');
       }
     }
 
   } catch (error) {
-    console.error('🚨 Network error:', error.message);
-    console.log('💡 Make sure the MCP server is running on', MCP_SERVER_URL);
+    logger.error({ error: error.message, serverUrl: MCP_SERVER_URL }, 'Network error - make sure MCP server is running');
   }
 }
 
@@ -46,23 +56,22 @@ async function checkHealth() {
   try {
     const response = await fetch(`${MCP_SERVER_URL}/health`);
     const health = await response.json();
-    console.log('🏥 Server status:', health.status);
-    console.log('📅 Server time:', health.timestamp);
+    logger.info({ status: health.status, timestamp: health.timestamp }, 'Server health check');
     return true;
   } catch (error) {
-    console.error('❌ Server not reachable:', error.message);
+    logger.error({ error: error.message }, 'Server not reachable');
     return false;
   }
 }
 
 // Main execution
 async function main() {
-  console.log('🎵 Spotify Token Refresh Tool\n');
+  logger.info('Spotify Token Refresh Tool');
 
   // Check if server is running
   const serverReady = await checkHealth();
   if (!serverReady) {
-    console.log('\n💡 Start the MCP server with: bun run mcp:http');
+    logger.info('Start the MCP server with: bun run mcp:http');
     process.exit(1);
   }
 
@@ -70,4 +79,4 @@ async function main() {
   await refreshToken();
 }
 
-main().catch(console.error);
+main().catch(error => logger.error({ error }, 'Script execution failed'));
