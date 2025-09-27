@@ -8,11 +8,94 @@ A powerful Model Context Protocol (MCP) server that provides access to the Spoti
 
 <a href="https://glama.ai/mcp/servers/mmrvuig6tp"><img width="380" height="200" src="https://glama.ai/mcp/servers/mmrvuig6tp/badge" alt="ArtistLens MCP server" /></a>
 
-## Installation
+## Quick Start
 
-### Local Development Setup
+### 🐳 Docker Setup (Recommended)
 
-This is a development/research project. To run locally:
+The easiest way to get started is with Docker, which includes both the MCP server and ngrok tunneling:
+
+```bash
+# Clone and setup
+git clone <repository-url>
+cd spotimy
+
+# Run the setup script
+./setup-docker.sh
+
+# Or manually:
+cp .env.example .env
+# Edit .env with your Spotify credentials
+docker-compose up -d
+```
+
+**Management commands:**
+```bash
+./manage-docker.sh start     # Start services
+./manage-docker.sh status    # Check status
+./manage-docker.sh logs      # View logs
+./manage-docker.sh health    # Check server health
+./manage-docker.sh auth      # Open Spotify auth
+./manage-docker.sh stop      # Stop services
+```
+
+## � Configuration
+
+### Required Environment Variables
+
+Create a `.env` file with these required variables:
+
+```env
+# Get these from https://developer.spotify.com/dashboard
+SPOTIFY_CLIENT_ID=your_client_id_here
+SPOTIFY_CLIENT_SECRET=your_client_secret_here
+
+# Server configuration  
+HTTP_HOST=0.0.0.0
+HTTP_PORT=3001
+
+# Ngrok configuration (recommended)
+NGROK_AUTHTOKEN=your_ngrok_auth_token
+NGROK_DOMAIN=your-custom-domain.ngrok.dev  # Optional: requires paid ngrok plan
+```
+
+### Getting Credentials
+
+**Spotify API:**
+1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Create a new app and copy Client ID & Secret
+3. Add redirect URI: `http://localhost:3001/callback`
+
+**Ngrok (Optional):**
+1. Sign up at [ngrok.com](https://ngrok.com) 
+2. Get your auth token from [dashboard](https://dashboard.ngrok.com/get-started/your-authtoken)
+3. Add to `.env` for stable tunnels and custom domains
+
+## 📊 Monitoring & Management
+
+### Docker Commands
+```bash
+# Essential commands
+docker-compose up -d          # Start services
+docker-compose logs -f        # View logs  
+docker-compose down           # Stop services
+docker-compose restart        # Restart services
+
+# Management script shortcuts
+./manage-docker.sh status     # Check all services
+./manage-docker.sh health     # Server health check
+./manage-docker.sh ngrok      # Tunnel information
+./manage-docker.sh shell      # Access container
+```
+
+### Service URLs
+- **Local Health**: http://localhost:3001/health
+- **Start Auth**: http://localhost:3001/auth  
+- **Ngrok Dashboard**: http://localhost:4040
+- **Public URL**: Shown in logs/dashboard
+
+### 💻 Local Development Setup
+
+For development and testing:
 
 ```bash
 # Clone the repository
@@ -195,6 +278,52 @@ For advanced use cases, this server also supports HTTP transport with integrated
 - Dynamic environment loading
 - Browser-based authorization
 - Comprehensive testing
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+**Docker Container Won't Start:**
+```bash
+# Check logs
+docker-compose logs
+# Restart services  
+docker-compose down && docker-compose up -d
+```
+
+**Ngrok Tunnel Fails:**
+- **ERR_NGROK_108**: Session limit reached. Check [dashboard](https://dashboard.ngrok.com/agents) for active sessions
+- **ERR_NGROK_4018**: Need auth token. Add `NGROK_AUTHTOKEN` to `.env`
+- **Domain issues**: Verify custom domain ownership in ngrok dashboard
+
+**Authentication Problems:**
+```bash
+# Check auth status
+curl http://localhost:3001/health
+# Manual token refresh
+curl -X POST http://localhost:3001/refresh-token
+```
+
+**Environment Variables:**
+```bash
+# Verify container environment
+docker-compose exec spotimy-mcp env | grep SPOTIFY
+# Source .env and restart
+set -a && source .env && set +a && docker-compose restart
+```
+
+### Data Persistence
+
+- **Tokens**: Stored in `spotimy_data` Docker volume
+- **Config**: `.env` file mounted and synced
+- **Reset**: `docker-compose down -v` removes all data
+
+### Performance
+
+- **Memory**: ~50MB per container
+- **CPU**: Minimal when idle, moderate during API calls  
+- **Network**: Outbound to Spotify API and ngrok
+- **Storage**: <10MB for logs and tokens
 
 ### Contributing
 

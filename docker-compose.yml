@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  spotimy-mcp:
+    build: .
+    container_name: spotimy-mcp-server
+    ports:
+      - "3001:3001"  # MCP HTTP server
+      - "4040:4040"  # Ngrok web interface
+    environment:
+      # Server configuration
+      - HTTP_HOST=0.0.0.0
+      - HTTP_PORT=3001
+      
+      # Spotify API credentials (set these in .env file)
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      
+      # Optional: Spotify tokens (will be obtained via OAuth if not provided)
+      - SPOTIFY_USER_ACCESS_TOKEN=${SPOTIFY_USER_ACCESS_TOKEN:-}
+      - SPOTIFY_REFRESH_TOKEN=${SPOTIFY_REFRESH_TOKEN:-}
+      - SPOTIFY_AUTH_CODE=${SPOTIFY_AUTH_CODE:-}
+      - SPOTIFY_TOKEN_EXPIRES_AT=${SPOTIFY_TOKEN_EXPIRES_AT:-}
+      
+      # Ngrok configuration
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
+      - NGROK_DOMAIN=${NGROK_DOMAIN:-}
+    volumes:
+      # Persist auth tokens and configuration
+      - spotimy_data:/app/data
+      # Mount .env file as writable for token updates
+      - ./.env:/app/.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  spotimy_data:
+    driver: local
