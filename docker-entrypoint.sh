@@ -14,6 +14,7 @@ trap cleanup SIGTERM SIGINT
 # Set default values if not provided
 HTTP_HOST=${HTTP_HOST:-127.0.0.1}
 HTTP_PORT=${HTTP_PORT:-3001}
+NGROK_FORWARD=${NGROK_FORWARD:-false}
 NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
 NGROK_DOMAIN=${NGROK_DOMAIN:-}
 
@@ -45,11 +46,14 @@ else
     fi
 fi
 
-# Configure ngrok if auth token is provided
-if [ -n "$NGROK_AUTHTOKEN" ]; then
+# Configure ngrok if forwarding is enabled and auth token is provided
+if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_AUTHTOKEN" ]; then
     echo "Configuring ngrok with auth token..."
     ngrok config add-authtoken "$NGROK_AUTHTOKEN"
     echo "Ngrok configured with auth token"
+elif [ "$NGROK_FORWARD" = "true" ] && [ -z "$NGROK_AUTHTOKEN" ]; then
+    echo "⚠️  NGROK_FORWARD is enabled but NGROK_AUTHTOKEN is missing"
+    echo "💡 Either set NGROK_AUTHTOKEN or set NGROK_FORWARD=false in .env"
 fi
 
 # Start the MCP HTTP server in the background
@@ -60,37 +64,43 @@ SERVER_PID=$!
 # Wait a moment for the server to start
 sleep 3
 
-# Start ngrok tunnel with better error handling
-echo "Starting ngrok tunnel..."
-# Set web interface to bind to all interfaces
-export NGROK_WEB_ADDR="0.0.0.0:4040"
+# Start ngrok tunnel if forwarding is enabled
+if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_AUTHTOKEN" ]; then
+    echo "Starting ngrok tunnel..."
+    # Set web interface to bind to all interfaces
+    export NGROK_WEB_ADDR="0.0.0.0:4040"
 
-if [ -n "$NGROK_DOMAIN" ]; then
-    # Use custom domain if provided
-    echo "Attempting to use custom domain: $NGROK_DOMAIN"
-    ngrok http --url="$NGROK_DOMAIN" "$HTTP_PORT" --log stdout &
-    NGROK_PID=$!
+    if [ -n "$NGROK_DOMAIN" ]; then
+        # Use custom domain if provided
+        echo "Attempting to use custom domain: $NGROK_DOMAIN"
+        ngrok http --url="$NGROK_DOMAIN" "$HTTP_PORT" --log stdout &
+        NGROK_PID=$!
+    else
+        # Use random ngrok domain
+        echo "Using random ngrok domain..."
+        ngrok http "$HTTP_PORT" --log stdout &
+        NGROK_PID=$!
+    fi
 else
-    # Use random ngrok domain
-    echo "Using random ngrok domain..."
-    ngrok http "$HTTP_PORT" --log stdout &
-    NGROK_PID=$!
+    echo "Ngrok forwarding disabled (NGROK_FORWARD=$NGROK_FORWARD)"
+    NGROK_PID=""
 fi
 
 # Wait a moment for ngrok to start
 sleep 5
 
-# Check if ngrok started successfully
-if ! kill -0 $NGROK_PID 2>/dev/null; then
+# Check if ngrok started successfully (only if forwarding is enabled)
+if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_PID" ] && ! kill -0 $NGROK_PID 2>/dev/null; then
     echo "⚠️  Ngrok failed to start (possibly due to session limit)"
     echo "💡 Check https://dashboard.ngrok.com/agents for active sessions"
     echo "💡 Or upgrade to a paid plan for multiple sessions"
     NGROK_PID=""
 fi
 
-# Show ngrok status
-echo "Getting ngrok tunnel info..."
-curl -s http://localhost:4040/api/tunnels | bun -e "
+# Show ngrok status if forwarding is enabled
+if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_PID" ]; then
+    echo "Getting ngrok tunnel info..."
+    curl -s http://localhost:4040/api/tunnels | bun -e "
 const data = JSON.parse(await Bun.stdin.text());
 if (data.tunnels && data.tunnels.length > 0) {
     const tunnel = data.tunnels[0];
@@ -102,11 +112,21 @@ if (data.tunnels && data.tunnels.length > 0) {
     console.log('⚠️  No active tunnels found');
 }
 " 2>/dev/null || echo "Could not fetch tunnel info (ngrok may still be starting)"
+elif [ "$NGROK_FORWARD" = "true" ]; then
+    echo "⚠️  Ngrok forwarding enabled but tunnel not started"
+else
+    echo "ℹ️  Ngrok forwarding disabled - server accessible locally only"
+fi
 
 echo ""
 echo "🚀 Services started!"
 echo "📡 MCP Server: http://$HTTP_HOST:$HTTP_PORT"
-echo "🌐 Ngrok Web Interface: http://localhost:4040"
+if [ "$NGROK_FORWARD" = "true" ]; then
+    echo "🌐 Ngrok Web Interface: http://localhost:4040 (container only)"
+    echo "🌍 Public Access: Check tunnel info above"
+else
+    echo "🏠 Local Access Only: Ngrok forwarding disabled"
+fi
 echo "💾 Auth data stored in: /app/data"
 echo ""
 echo "Available endpoints:"

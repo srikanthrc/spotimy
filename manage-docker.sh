@@ -129,6 +129,17 @@ open_auth() {
 show_ngrok_info() {
     echo "🌐 Ngrok tunnel information:"
     
+    # Check if ngrok forwarding is enabled
+    NGROK_FORWARD=$(grep "^NGROK_FORWARD=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
+    
+    if [ "$NGROK_FORWARD" != "true" ]; then
+        echo "ℹ️  Ngrok forwarding is disabled"
+        echo "   Status: NGROK_FORWARD=${NGROK_FORWARD:-false} in .env"
+        echo "   💡 To enable: Set NGROK_FORWARD=true in .env file"
+        echo "   🏠 Server accessible locally at: http://localhost:3001"
+        return
+    fi
+    
     # Try to get tunnel info from the container's ngrok API
     if $DOCKER_COMPOSE_CMD exec spotimy-mcp curl -s http://localhost:4040/api/tunnels >/dev/null 2>&1; then
         TUNNEL_INFO=$($DOCKER_COMPOSE_CMD exec spotimy-mcp curl -s http://localhost:4040/api/tunnels 2>/dev/null)
@@ -155,8 +166,8 @@ show_ngrok_info() {
     else
         echo "❌ Cannot connect to ngrok API inside container"
         echo "💡 Make sure services are running: $SCRIPT_NAME status"
-        echo "💡 Note: Ngrok web interface not accessible from host (normal for ngrok v3)"
-        echo "   The tunnel functionality is working even without web access"
+        echo "💡 Ngrok forwarding enabled but tunnel not accessible"
+        echo "   Check container logs: $SCRIPT_NAME logs"
     fi
 }
 

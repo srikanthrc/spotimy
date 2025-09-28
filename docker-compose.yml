@@ -23,6 +23,7 @@ services:
       - SPOTIFY_TOKEN_EXPIRES_AT=${SPOTIFY_TOKEN_EXPIRES_AT:-}
       
       # Ngrok configuration
+      - NGROK_FORWARD=${NGROK_FORWARD:-false}
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
       - NGROK_DOMAIN=${NGROK_DOMAIN:-}
     volumes:
