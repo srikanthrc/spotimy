@@ -129,13 +129,13 @@ open_auth() {
 show_ngrok_info() {
     echo "🌐 Ngrok tunnel information:"
     
-    # Check if ngrok forwarding is enabled
-    NGROK_FORWARD=$(grep "^NGROK_FORWARD=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
+    # Check if ngrok auth token is provided
+    NGROK_AUTH_TOKEN=$(grep "^NGROK_AUTH_TOKEN=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"')
     
-    if [ "$NGROK_FORWARD" != "true" ]; then
+    if [ -z "$NGROK_AUTH_TOKEN" ]; then
         echo "ℹ️  Ngrok forwarding is disabled"
-        echo "   Status: NGROK_FORWARD=${NGROK_FORWARD:-false} in .env"
-        echo "   💡 To enable: Set NGROK_FORWARD=true in .env file"
+        echo "   Status: No NGROK_AUTH_TOKEN found in .env"
+        echo "   💡 To enable: Set NGROK_AUTH_TOKEN=<your-token> in .env file"
         echo "   🏠 Server accessible locally at: http://localhost:3001"
         return
     fi
@@ -166,7 +166,7 @@ show_ngrok_info() {
     else
         echo "❌ Cannot connect to ngrok API inside container"
         echo "💡 Make sure services are running: $SCRIPT_NAME status"
-        echo "💡 Ngrok forwarding enabled but tunnel not accessible"
+        echo "💡 Ngrok auth token provided but tunnel not accessible"
         echo "   Check container logs: $SCRIPT_NAME logs"
     fi
 }

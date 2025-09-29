@@ -14,8 +14,7 @@ trap cleanup SIGTERM SIGINT
 # Set default values if not provided
 HTTP_HOST=${HTTP_HOST:-127.0.0.1}
 HTTP_PORT=${HTTP_PORT:-3001}
-NGROK_FORWARD=${NGROK_FORWARD:-false}
-NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
+NGROK_AUTH_TOKEN=${NGROK_AUTH_TOKEN:-}
 NGROK_DOMAIN=${NGROK_DOMAIN:-}
 
 echo "Starting Spotify MCP Server with ngrok tunnel..."
@@ -46,14 +45,11 @@ else
     fi
 fi
 
-# Configure ngrok if forwarding is enabled and auth token is provided
-if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_AUTHTOKEN" ]; then
+# Configure ngrok if auth token is provided
+if [ -n "$NGROK_AUTH_TOKEN" ]; then
     echo "Configuring ngrok with auth token..."
-    ngrok config add-authtoken "$NGROK_AUTHTOKEN"
+    ngrok config add-authtoken "$NGROK_AUTH_TOKEN"
     echo "Ngrok configured with auth token"
-elif [ "$NGROK_FORWARD" = "true" ] && [ -z "$NGROK_AUTHTOKEN" ]; then
-    echo "⚠️  NGROK_FORWARD is enabled but NGROK_AUTHTOKEN is missing"
-    echo "💡 Either set NGROK_AUTHTOKEN or set NGROK_FORWARD=false in .env"
 fi
 
 # Start the MCP HTTP server in the background
@@ -64,8 +60,8 @@ SERVER_PID=$!
 # Wait a moment for the server to start
 sleep 3
 
-# Start ngrok tunnel if forwarding is enabled
-if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_AUTHTOKEN" ]; then
+# Start ngrok tunnel if auth token is provided
+if [ -n "$NGROK_AUTH_TOKEN" ]; then
     echo "Starting ngrok tunnel..."
     # Set web interface to bind to all interfaces
     export NGROK_WEB_ADDR="0.0.0.0:4040"
@@ -82,23 +78,23 @@ if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_AUTHTOKEN" ]; then
         NGROK_PID=$!
     fi
 else
-    echo "Ngrok forwarding disabled (NGROK_FORWARD=$NGROK_FORWARD)"
+    echo "Ngrok forwarding disabled (no NGROK_AUTH_TOKEN provided)"
     NGROK_PID=""
 fi
 
 # Wait a moment for ngrok to start
 sleep 5
 
-# Check if ngrok started successfully (only if forwarding is enabled)
-if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_PID" ] && ! kill -0 $NGROK_PID 2>/dev/null; then
+# Check if ngrok started successfully
+if [ -n "$NGROK_PID" ] && ! kill -0 $NGROK_PID 2>/dev/null; then
     echo "⚠️  Ngrok failed to start (possibly due to session limit)"
     echo "💡 Check https://dashboard.ngrok.com/agents for active sessions"
     echo "💡 Or upgrade to a paid plan for multiple sessions"
     NGROK_PID=""
 fi
 
-# Show ngrok status if forwarding is enabled
-if [ "$NGROK_FORWARD" = "true" ] && [ -n "$NGROK_PID" ]; then
+# Show ngrok status if tunnel is running
+if [ -n "$NGROK_PID" ]; then
     echo "Getting ngrok tunnel info..."
     curl -s http://localhost:4040/api/tunnels | bun -e "
 const data = JSON.parse(await Bun.stdin.text());
@@ -112,8 +108,6 @@ if (data.tunnels && data.tunnels.length > 0) {
     console.log('⚠️  No active tunnels found');
 }
 " 2>/dev/null || echo "Could not fetch tunnel info (ngrok may still be starting)"
-elif [ "$NGROK_FORWARD" = "true" ]; then
-    echo "⚠️  Ngrok forwarding enabled but tunnel not started"
 else
     echo "ℹ️  Ngrok forwarding disabled - server accessible locally only"
 fi
@@ -121,14 +115,15 @@ fi
 echo ""
 echo "🚀 Services started!"
 echo "📡 MCP Server: http://$HTTP_HOST:$HTTP_PORT"
-if [ "$NGROK_FORWARD" = "true" ]; then
+if [ -n "$NGROK_AUTH_TOKEN" ]; then
     echo "🌐 Ngrok Web Interface: http://localhost:4040 (container only)"
     echo "🌍 Public Access: Check tunnel info above"
 else
-    echo "🏠 Local Access Only: Ngrok forwarding disabled"
+    echo "🏠 Local Access Only: No ngrok auth token provided"
 fi
 echo "💾 Auth data stored in: /app/data"
 echo ""
+
 echo "Available endpoints:"
 echo "  GET  /health       - Health check"
 echo "  GET  /auth         - Start Spotify OAuth flow"

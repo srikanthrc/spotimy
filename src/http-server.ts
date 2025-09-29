@@ -65,6 +65,59 @@ class SpotifyHttpServer {
     return args as unknown as T;
   }
 
+  private async getNgrokStatus() {
+    const ngrokAuthToken = process.env.NGROK_AUTH_TOKEN;
+    
+    if (!ngrokAuthToken) {
+      return {
+        status: 'Disabled',
+        enabled: false,
+        reason: 'No NGROK_AUTH_TOKEN provided',
+        access: 'Local only'
+      };
+    }
+
+    try {
+      // Try to fetch tunnel info from ngrok API
+      const response = await fetch('http://localhost:4040/api/tunnels');
+      
+      if (!response.ok) {
+        throw new Error(`Ngrok API returned ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.tunnels && data.tunnels.length > 0) {
+        const tunnel = data.tunnels[0];
+        return {
+          status: 'Active',
+          enabled: true,
+          publicUrl: tunnel.public_url,
+          localUrl: tunnel.config.addr,
+          protocol: tunnel.proto,
+          connections: tunnel.metrics?.conns?.gauge || 0,
+          totalRequests: tunnel.metrics?.http?.count || 0,
+          webInterface: 'http://localhost:4040'
+        };
+      } else {
+        return {
+          status: 'No tunnels',
+          enabled: true,
+          reason: 'Ngrok is configured but no active tunnels found',
+          webInterface: 'http://localhost:4040'
+        };
+      }
+    } catch (error) {
+      return {
+        status: 'Error',
+        enabled: true,
+        reason: 'Ngrok is configured but not accessible',
+        error: error instanceof Error ? error.message : String(error),
+        note: 'Tunnel may still be starting up'
+      };
+    }
+  }
+
   private server: Server;
   private authManager: AuthManager;
   private api: SpotifyApi;
@@ -983,13 +1036,17 @@ class SpotifyHttpServer {
         if (url.pathname === '/health') {
           try {
             const authStatus = await this.authManager.getAuthStatus();
+            
+            // Check ngrok forwarding status
+            const ngrokStatus = await this.getNgrokStatus();
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               status: 'ok',
               message: 'Spotify MCP Server is running',
               timestamp: new Date().toISOString(),
-              auth: authStatus
+              auth: authStatus,
+              forwarding: ngrokStatus
             }));
           } catch (error) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1004,6 +1061,11 @@ class SpotifyHttpServer {
                 hasRefreshToken: false,
                 hasAuthCode: false,
                 hasClientCredentials: false,
+                error: error instanceof Error ? error.message : String(error)
+              },
+              forwarding: {
+                status: 'Error checking forwarding',
+                enabled: false,
                 error: error instanceof Error ? error.message : String(error)
               }
             }));
