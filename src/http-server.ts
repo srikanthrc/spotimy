@@ -1036,21 +1036,41 @@ class SpotifyHttpServer {
         if (url.pathname === '/health') {
           try {
             const authStatus = await this.authManager.getAuthStatus();
-            
+
             // Check ngrok forwarding status
             const ngrokStatus = await this.getNgrokStatus();
 
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            const healthData = {
               status: 'ok',
               message: 'Spotify MCP Server is running',
               timestamp: new Date().toISOString(),
               auth: authStatus,
               forwarding: ngrokStatus
-            }));
+            };
+
+            // Check if request wants JSON (from curl, fetch, etc.) or HTML (browser)
+            const acceptHeader = req.headers['accept'] || '';
+            if (acceptHeader.includes('text/html')) {
+              // Return formatted HTML for browser viewing
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(`
+                <!DOCTYPE html>
+                <html>
+                  <head>
+                    <title>Spotify MCP Server - Health Check</title>
+                  </head>
+                  <body>
+                    <pre>${JSON.stringify(healthData, null, 2)}</pre>
+                  </body>
+                </html>
+              `);
+            } else {
+              // Return plain JSON for API clients
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(healthData, null, 2));
+            }
           } catch (error) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            const errorData = {
               status: 'ok',
               message: 'Spotify MCP Server is running',
               timestamp: new Date().toISOString(),
@@ -1068,7 +1088,26 @@ class SpotifyHttpServer {
                 enabled: false,
                 error: error instanceof Error ? error.message : String(error)
               }
-            }));
+            };
+
+            const acceptHeader = req.headers['accept'] || '';
+            if (acceptHeader.includes('text/html')) {
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(`
+                <!DOCTYPE html>
+                <html>
+                  <head>
+                    <title>Spotify MCP Server - Health Check</title>
+                  </head>
+                  <body>
+                    <pre>${JSON.stringify(errorData, null, 2)}</pre>
+                  </body>
+                </html>
+              `);
+            } else {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(errorData, null, 2));
+            }
           }
           return;
         }
