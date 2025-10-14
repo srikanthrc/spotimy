@@ -51,9 +51,10 @@ docker-compose logs -f spotimy-mcp # View logs
 
 **HTTP Transport** ([src/http-server.ts](src/http-server.ts))
 - Multi-client MCP server using Server-Sent Events (SSE)
-- Integrated OAuth flow with `/auth`, `/callback`, `/refresh-token` endpoints
+- Integrated OAuth flow with `/auth`, `/callback`, `/revoke` endpoints
+- Multi-user session management with SQLite token storage
 - Session management via `SSEServerTransport`
-- Health checks at `/health` with real-time auth validation
+- Health checks at `/health?sessionId=<id>` with real-time auth validation
 - Ngrok tunnel status reporting
 
 ### Core Components
@@ -151,10 +152,11 @@ Categories:
 - Avoid logging full tokens (use `.substring(0, 20)`)
 
 ### Testing HTTP Transport
-- OAuth flow: Visit `http://localhost:3001/auth` in browser
-- Health check: `curl http://localhost:3001/health | jq`
-- Token refresh: `curl -X POST http://localhost:3001/refresh-token`
+- OAuth flow: Visit `http://localhost:3001/auth?sessionId=<id>` in browser
+- Health check: `curl http://localhost:3001/health?sessionId=<id> | jq`
+- Revoke session: `curl -X POST http://localhost:3001/revoke?sessionId=<id>`
 - Ngrok status: `curl http://localhost:4040/api/tunnels` (when using Docker)
+- Token refresh: Automatic via AuthManager when token expires
 
 ### Docker Deployment
 - `docker-compose.yml` runs both MCP server and ngrok sidecar

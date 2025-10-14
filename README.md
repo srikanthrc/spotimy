@@ -298,10 +298,12 @@ docker-compose down && docker-compose up -d
 
 **Authentication Problems:**
 ```bash
-# Check auth status
-curl http://localhost:3001/health
-# Manual token refresh
-curl -X POST http://localhost:3001/refresh-token
+# Check auth status (replace <sessionId> with your actual session ID)
+curl http://localhost:3001/health?sessionId=<sessionId>
+# Token refresh is automatic - just re-authorize if needed
+curl http://localhost:3001/auth?sessionId=<sessionId>
+# Or revoke and start fresh
+curl -X POST http://localhost:3001/revoke?sessionId=<sessionId>
 ```
 
 **Environment Variables:**

@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -39,7 +39,7 @@ export interface SessionInfo {
  * - Automatic token expiry cleanup
  */
 export class TokenStore {
-  private db: Database.Database;
+  private db: Database;
   private encryptionKey: Buffer;
   private readonly dbPath: string;
   private readonly keyPath: string;
@@ -57,7 +57,7 @@ export class TokenStore {
     this.encryptionKey = this.loadOrGenerateKey();
 
     // Initialize database
-    this.db = new Database(this.dbPath);
+    this.db = new Database(this.dbPath, { create: true });
     this.initializeSchema();
 
     logger.info({ dbPath: this.dbPath }, 'TokenStore initialized');
@@ -95,7 +95,7 @@ export class TokenStore {
    * Initialize database schema
    */
   private initializeSchema(): void {
-    this.db.exec(`
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS users (
         user_id TEXT PRIMARY KEY,
         access_token_encrypted TEXT NOT NULL,

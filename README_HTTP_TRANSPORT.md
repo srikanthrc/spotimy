@@ -1,5 +1,9 @@
 # MCP HTTP Transport with Integrated OAuth
 
+> **⚠️ DEPRECATED**: This document describes the older single-user OAuth architecture.
+>
+> **For the current multi-user architecture, see [README_MULTI_USER_SETUP.md](README_MULTI_USER_SETUP.md)**
+
 > **Note**: This is a Spotify MCP server based on the original [ArtistLens](https://github.com/superseoworld/artistlens) by Thomas Wawra.
 
 The Spotify MCP server supports both traditional stdio transport and **MCP Streamable HTTP transport with fully integrated OAuth functionality**. This eliminates the need for separate callback server utilities and provides a complete, self-contained solution.
@@ -43,7 +47,7 @@ curl http://localhost:3001/health | jq '.auth'
 ### OAuth Integration Endpoints
 - **`GET /auth`** - OAuth authorization page with clickable button
 - **`GET /callback`** - OAuth callback handler (auto-exchanges code for token)
-- **`POST /refresh-token`** - Token refresh using existing auth code
+- ~~**`POST /refresh-token`**~~ - **REMOVED**: Token refresh is now automatic via AuthManager
 
 ### Utility Endpoints
 - **`GET /health`** - Enhanced health check with real-time auth validation
@@ -145,8 +149,7 @@ open http://localhost:3001/auth
 # Check if tokens are valid
 curl http://localhost:3001/health | jq '.auth.tokenValid'
 
-# Refresh tokens if needed (using existing auth code)
-curl -X POST http://localhost:3001/refresh-token
+# Token refresh is now automatic - no manual endpoint needed
 ```
 
 ## Authentication Status
@@ -236,12 +239,12 @@ bun src/http-server.ts --port=8080 --host=0.0.0.0
     host: "127.0.0.1"
     port: 3001
 [23:34:30 UTC] INFO: Endpoints available:
-[23:34:30 UTC] INFO:   GET  /mcp           - MCP SSE connection
-[23:34:30 UTC] INFO:   POST /mcp          - MCP message endpoint
-[23:34:30 UTC] INFO:   GET  /health       - Health check
-[23:34:30 UTC] INFO:   GET  /auth         - Start Spotify OAuth flow
-[23:34:30 UTC] INFO:   GET  /callback     - Spotify OAuth callback
-[23:34:30 UTC] INFO:   POST /refresh-token - Refresh Spotify access token
+[23:34:30 UTC] INFO:   GET  /mcp                      - MCP SSE connection
+[23:34:30 UTC] INFO:   POST /mcp                      - MCP message endpoint
+[23:34:30 UTC] INFO:   GET  /health?sessionId=<id>    - Health check (session-specific)
+[23:34:30 UTC] INFO:   GET  /auth?sessionId=<id>      - Start Spotify OAuth for session
+[23:34:30 UTC] INFO:   GET  /callback                 - Spotify OAuth callback
+[23:34:30 UTC] INFO:   POST /revoke?sessionId=<id>    - Revoke session authorization
 ```
 
 **Production Mode** (structured JSON for log aggregation):
@@ -286,10 +289,7 @@ Output:
 # Check current auth status
 curl http://localhost:3001/health | jq '.auth'
 
-# Refresh expired tokens
-curl -X POST http://localhost:3001/refresh-token
-
-# Start fresh OAuth flow
+# Token refresh is automatic - start fresh OAuth flow if needed
 open http://localhost:3001/auth
 ```
 

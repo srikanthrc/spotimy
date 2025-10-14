@@ -322,29 +322,38 @@ describe('HTTP Transport Integration with OAuth', () => {
     });
   });
 
-  describe('Token Refresh', () => {
-    it('should provide refresh token endpoint', async () => {
-      const response = await fetch(`${BASE_URL}/refresh-token`, { method: 'POST' });
+  describe('Session Revocation', () => {
+    it('should provide session revoke endpoint', async () => {
+      const testSessionId = 'test-session-123';
+      const response = await fetch(`${BASE_URL}/revoke?sessionId=${testSessionId}`, { method: 'POST' });
       const data = await response.json();
 
-      expect([200, 500]).toContain(response.status); // Could succeed or fail depending on token state
+      expect([200, 500]).toContain(response.status); // Could succeed or fail depending on session state
       expect(data).toHaveProperty('success');
 
       if (data.success) {
         expect(data).toHaveProperty('message');
-        expect(data).toHaveProperty('token');
       } else {
         expect(data).toHaveProperty('error');
         expect(data).toHaveProperty('details');
       }
     });
 
-    it('should reject non-POST requests to /refresh-token', async () => {
-      const response = await fetch(`${BASE_URL}/refresh-token`, { method: 'GET' });
+    it('should reject non-POST requests to /revoke', async () => {
+      const testSessionId = 'test-session-123';
+      const response = await fetch(`${BASE_URL}/revoke?sessionId=${testSessionId}`, { method: 'GET' });
       const data = await response.json();
 
       expect(response.status).toBe(405);
       expect(data).toHaveProperty('error', 'Method not allowed. Use POST.');
+    });
+
+    it('should reject revoke requests without sessionId', async () => {
+      const response = await fetch(`${BASE_URL}/revoke`, { method: 'POST' });
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data).toHaveProperty('error', 'Missing sessionId parameter');
     });
   });
 

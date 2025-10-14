@@ -125,12 +125,12 @@ echo "💾 Auth data stored in: /app/data"
 echo ""
 
 echo "Available endpoints:"
-echo "  GET  /health       - Health check"
-echo "  GET  /auth         - Start Spotify OAuth flow"
-echo "  GET  /callback     - Spotify OAuth callback"
-echo "  POST /refresh-token - Refresh Spotify access token"
-echo "  GET  /mcp          - MCP SSE connection"
-echo "  POST /mcp          - MCP message endpoint"
+echo "  GET  /mcp                      - MCP SSE connection"
+echo "  POST /mcp                      - MCP message endpoint"
+echo "  GET  /health?sessionId=<id>    - Health check (session-specific)"
+echo "  GET  /auth?sessionId=<id>      - Start Spotify OAuth for session"
+echo "  GET  /callback                 - Spotify OAuth callback"
+echo "  POST /revoke?sessionId=<id>    - Revoke session authorization"
 echo ""
 
 # Wait for both processes
