@@ -1,5 +1,10 @@
 node_modules/
 build/
 .env
+.env.bkup
 .DS_Store
+
+# Multi-user token storage
+data/
+.encryption-key
 .vscode/mcp.json

@@ -1,73 +1,49 @@
 import axios from 'axios';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { TokenInfo } from '../types/common.js';
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import logger from './logger.js';
+import { TokenStore, UserToken } from './token-store.js';
 
-// Don't cache these at startup - read them fresh each time
-function getEnvVars() {
-  // Re-read .env file to get latest values
-  const envPath = path.join(process.cwd(), '.env');
-  if (fs.existsSync(envPath)) {
-    const envContent = fs.readFileSync(envPath, 'utf8');
-    const envVars: Record<string, string> = {};
-
-    envContent.split('\n').forEach(line => {
-      const match = line.match(/^([^#][^=]*?)="?([^"]*)"?$/);
-      if (match) {
-        const [, key, value] = match;
-        envVars[key.trim()] = value.trim();
-      }
-    });
-
-    // Update process.env with fresh values
-    Object.assign(process.env, envVars);
-  }
-
-  return {
-    SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID,
-    SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET,
-    SPOTIFY_USER_ACCESS_TOKEN: process.env.SPOTIFY_USER_ACCESS_TOKEN,
-    SPOTIFY_REFRESH_TOKEN: process.env.SPOTIFY_REFRESH_TOKEN,
-    SPOTIFY_AUTH_CODE: process.env.SPOTIFY_AUTH_CODE,
-    SPOTIFY_TOKEN_EXPIRES_AT: process.env.SPOTIFY_TOKEN_EXPIRES_AT,
-    HTTP_HOST: process.env.HTTP_HOST,
-    HTTP_PORT: process.env.HTTP_PORT
-  };
-}
-
-// Initial validation - but we'll re-check dynamically
-const initialEnv = getEnvVars();
-if (!initialEnv.SPOTIFY_CLIENT_ID || !initialEnv.SPOTIFY_CLIENT_SECRET) {
-  throw new Error('SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables are required');
-}
-
-logger.info({ hasUserToken: !!initialEnv.SPOTIFY_USER_ACCESS_TOKEN }, 'Spotify User Access token status');
-// Note: Spotify access tokens are opaque tokens, not JWTs, so we don't validate format
-
+/**
+ * Multi-user authentication manager with secure token storage
+ *
+ * Features:
+ * - Per-session OAuth authorization
+ * - Secure encrypted token persistence
+ * - Automatic token refresh
+ * - Backward compatibility with .env tokens
+ */
 export class AuthManager {
-  private tokenInfo: TokenInfo | null = null;
-  private storedRefreshToken: string | null = null;
+  private tokenStore: TokenStore;
   private readonly clientId: string;
   private readonly clientSecret: string;
   private readonly redirectUri: string;
   private readonly scopes: string[];
+  private pendingAuthStates = new Map<string, { sessionId: string; expiresAt: number }>();
 
-  constructor(redirectUri?: string) {
-    const env = getEnvVars();
-    this.clientId = env.SPOTIFY_CLIENT_ID!;
-    this.clientSecret = env.SPOTIFY_CLIENT_SECRET!;
+  // Fallback client credentials token (for unauthenticated requests)
+  private clientCredentialsToken: TokenInfo | null = null;
 
-    // Build redirect URI from environment variables if not provided
-    if (redirectUri) {
-      this.redirectUri = redirectUri;
-    } else {
-      const host = process.env.HTTP_HOST || '127.0.0.1';
-      const port = process.env.HTTP_PORT || '3001';
-      this.redirectUri = `http://${host}:${port}/callback`;
+  constructor(dataDir?: string) {
+    const clientId = process.env.SPOTIFY_CLIENT_ID;
+    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      throw new Error('SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables are required');
     }
+
+    this.clientId = clientId;
+    this.clientSecret = clientSecret;
+
+    // Initialize token store
+    this.tokenStore = new TokenStore(dataDir || process.env.TOKEN_STORE_PATH || './data');
+
+    // Build redirect URI from environment variables
+    const host = process.env.HTTP_HOST || '127.0.0.1';
+    const port = process.env.HTTP_PORT || '3001';
+    this.redirectUri = `http://${host}:${port}/callback`;
+
     this.scopes = [
       'playlist-read-private',
       'playlist-read-collaborative',
@@ -76,44 +52,57 @@ export class AuthManager {
       'playlist-modify-public',
       'playlist-modify-private'
     ];
+
+    logger.info({ redirectUri: this.redirectUri }, 'AuthManager initialized with multi-user support');
+
+    // Periodic cleanup of expired tokens
+    setInterval(() => {
+      this.tokenStore.cleanupExpiredTokens();
+    }, 24 * 60 * 60 * 1000); // Daily cleanup
   }
 
-  async getAccessToken(): Promise<string> {
-    // Get fresh environment variables each time
-    const env = getEnvVars();
+  /**
+   * Get access token for a specific session
+   */
+  async getAccessToken(sessionId?: string): Promise<string> {
+    // If sessionId provided, try to get user token
+    if (sessionId) {
+      const token = this.tokenStore.getTokenBySession(sessionId);
 
-    // If we have a user token, validate it first
-    if (env.SPOTIFY_USER_ACCESS_TOKEN) {
-      // Test if the user token is still valid (pass token explicitly to avoid circular dependency)
-      const validation = await this.validateToken(env.SPOTIFY_USER_ACCESS_TOKEN);
-
-      if (validation.valid) {
-        // Token is valid, return it
-        return env.SPOTIFY_USER_ACCESS_TOKEN;
-      } else {
-        // Token is expired/invalid, try to refresh it
-        if (env.SPOTIFY_REFRESH_TOKEN) {
-          try {
-            logger.info('User token expired, refreshing...');
-            const newToken = await this.refreshAccessToken();
-            return newToken;
-          } catch (refreshError) {
-            logger.error({ error: refreshError }, 'Failed to refresh user token');
-            // Fall through to client credentials as fallback
-          }
-        } else {
-          logger.warn('User token expired and no refresh token available');
-          // Fall through to client credentials as fallback
+      if (token) {
+        // Check if token is expired
+        if (Date.now() < token.expiresAt) {
+          return token.accessToken;
         }
+
+        // Token expired, try to refresh
+        try {
+          logger.info({ sessionId, userId: token.userId }, 'User token expired, refreshing...');
+          const refreshed = await this.refreshUserToken(token.userId, token.refreshToken);
+          return refreshed.accessToken;
+        } catch (error) {
+          logger.error({ error, sessionId, userId: token.userId }, 'Failed to refresh user token');
+          // Fall through to client credentials
+        }
+      } else {
+        logger.debug({ sessionId }, 'No user token found for session, using client credentials');
       }
     }
 
-    // Check if we have a valid client credentials token cached
-    if (this.tokenInfo && Date.now() < this.tokenInfo.expiresAt) {
-      return this.tokenInfo.accessToken;
+    // Fall back to client credentials token
+    return this.getClientCredentialsToken();
+  }
+
+  /**
+   * Get client credentials token (for unauthenticated requests)
+   */
+  private async getClientCredentialsToken(): Promise<string> {
+    // Check if we have a valid cached token
+    if (this.clientCredentialsToken && Date.now() < this.clientCredentialsToken.expiresAt) {
+      return this.clientCredentialsToken.accessToken;
     }
 
-    // Get new client credentials token as fallback
+    // Get new client credentials token
     try {
       logger.info('Getting new client credentials token...');
       const response = await axios.post('https://accounts.spotify.com/api/token',
@@ -123,17 +112,17 @@ export class AuthManager {
         {
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': 'Basic ' + Buffer.from(env.SPOTIFY_CLIENT_ID + ':' + env.SPOTIFY_CLIENT_SECRET).toString('base64')
+            'Authorization': 'Basic ' + Buffer.from(this.clientId + ':' + this.clientSecret).toString('base64')
           }
         }
       );
 
-      this.tokenInfo = {
+      this.clientCredentialsToken = {
         accessToken: response.data.access_token,
         expiresAt: Date.now() + (response.data.expires_in * 1000)
       };
 
-      return this.tokenInfo.accessToken;
+      return this.clientCredentialsToken.accessToken;
     } catch (error) {
       if (axios.isAxiosError(error)) {
         throw new McpError(
@@ -146,36 +135,35 @@ export class AuthManager {
   }
 
   /**
-   * Get the current redirect URI being used
+   * Generate authorization URL for OAuth flow with session binding
    */
-  getRedirectUri(): string {
-    return this.redirectUri;
-  }
+  getAuthorizationUrl(sessionId: string): string {
+    // Generate random state for CSRF protection
+    const state = crypto.randomBytes(32).toString('hex');
 
-  /**
-   * Generate authorization URL for OAuth flow
-   */
-  getAuthorizationUrl(state?: string): string {
+    // Store state with session mapping (expires in 10 minutes)
+    this.pendingAuthStates.set(state, {
+      sessionId,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+
     const params = new URLSearchParams({
       client_id: this.clientId,
       response_type: 'code',
       redirect_uri: this.redirectUri,
       scope: this.scopes.join(' '),
+      state,
       show_dialog: 'true'
     });
-
-    if (state) {
-      params.append('state', state);
-    }
 
     return `https://accounts.spotify.com/authorize?${params.toString()}`;
   }
 
   /**
-   * Generate authorization page HTML
+   * Get authorization page HTML for a specific session
    */
-  getAuthorizationPageHtml(): string {
-    const authUrl = this.getAuthorizationUrl();
+  getAuthorizationPageHtml(sessionId: string): string {
+    const authUrl = this.getAuthorizationUrl(sessionId);
     return `
       <html>
         <head>
@@ -187,12 +175,14 @@ export class AuthManager {
             .auth-btn { background: #1db954; color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; font-size: 16px; display: inline-block; margin: 20px 0; }
             .auth-btn:hover { background: #1ed760; }
             .info { background: #282828; padding: 20px; border-radius: 10px; margin: 20px 0; }
+            .session-id { font-family: monospace; color: #1db954; font-size: 12px; }
           </style>
         </head>
         <body>
           <div class="container">
             <h1>🎵 Spotify Authorization</h1>
-            <p>Click the button below to authorize the MCP server to access your Spotify data:</p>
+            <p>Click the button below to authorize this session to access your Spotify data:</p>
+            <p class="session-id">Session: ${sessionId.substring(0, 16)}...</p>
             <a href="${authUrl}" class="auth-btn">Authorize Spotify Access</a>
             <div class="info">
               <h3>Required Permissions:</h3>
@@ -211,9 +201,29 @@ export class AuthManager {
   }
 
   /**
-   * Exchange authorization code for access token and refresh token
+   * Exchange authorization code for tokens and link to session
    */
-  async exchangeCodeForTokens(code: string): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
+  async exchangeCodeForTokens(code: string, state: string): Promise<{
+    sessionId: string;
+    userId: string;
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+  }> {
+    // Validate state and get session
+    const authState = this.pendingAuthStates.get(state);
+    if (!authState) {
+      throw new McpError(ErrorCode.InvalidParams, 'Invalid or expired authorization state');
+    }
+
+    if (Date.now() > authState.expiresAt) {
+      this.pendingAuthStates.delete(state);
+      throw new McpError(ErrorCode.InvalidParams, 'Authorization state expired');
+    }
+
+    const sessionId = authState.sessionId;
+    this.pendingAuthStates.delete(state);
+
     try {
       const response = await axios.post('https://accounts.spotify.com/api/token',
         new URLSearchParams({
@@ -236,25 +246,37 @@ export class AuthManager {
         throw new Error('Invalid response from Spotify token endpoint');
       }
 
-      // Store tokens
-      this.tokenInfo = {
+      // Get user info from Spotify
+      const userInfo = await this.fetchSpotifyUserInfo(access_token);
+
+      // Generate userId from Spotify user ID
+      const userId = userInfo.id;
+
+      // Save token to store
+      const expiresAt = Date.now() + (expires_in * 1000);
+      const userToken: UserToken = {
+        userId,
+        sessionId,
         accessToken: access_token,
-        expiresAt: Date.now() + (expires_in * 1000)
+        refreshToken: refresh_token,
+        expiresAt,
+        spotifyUserId: userInfo.id,
+        displayName: userInfo.display_name,
+        email: userInfo.email,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
       };
-      this.storedRefreshToken = refresh_token;
 
-      // Calculate expiry timestamp
-      const expiryTimestamp = Date.now() + (expires_in * 1000);
+      this.tokenStore.saveUserToken(userToken);
 
-      // Update .env file
-      await this.updateEnvFile({
-        SPOTIFY_USER_ACCESS_TOKEN: access_token,
-        SPOTIFY_REFRESH_TOKEN: refresh_token,
-        SPOTIFY_AUTH_CODE: code,
-        SPOTIFY_TOKEN_EXPIRES_AT: expiryTimestamp.toString()
-      });
+      // Link session to user
+      this.tokenStore.linkSession(sessionId, userId);
+
+      logger.info({ sessionId, userId, spotifyUserId: userInfo.id }, 'User authorized successfully');
 
       return {
+        sessionId,
+        userId,
         accessToken: access_token,
         refreshToken: refresh_token,
         expiresIn: expires_in
@@ -274,19 +296,30 @@ export class AuthManager {
   }
 
   /**
-   * Refresh access token using refresh token
+   * Fetch user info from Spotify API
    */
-  async refreshAccessToken(): Promise<string> {
-    const env = getEnvVars();
-    const refreshToken = this.storedRefreshToken || env.SPOTIFY_REFRESH_TOKEN;
+  private async fetchSpotifyUserInfo(accessToken: string): Promise<{
+    id: string;
+    display_name: string;
+    email: string;
+  }> {
+    const response = await axios.get('https://api.spotify.com/v1/me', {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
 
-    if (!refreshToken) {
-      throw new McpError(
-        ErrorCode.InvalidParams,
-        'No refresh token available. Please complete OAuth authorization flow first.'
-      );
-    }
+    return {
+      id: response.data.id,
+      display_name: response.data.display_name,
+      email: response.data.email
+    };
+  }
 
+  /**
+   * Refresh user access token
+   */
+  private async refreshUserToken(userId: string, refreshToken: string): Promise<{ accessToken: string; expiresAt: number }> {
     try {
       const response = await axios.post('https://accounts.spotify.com/api/token',
         new URLSearchParams({
@@ -302,34 +335,29 @@ export class AuthManager {
         }
       );
 
-      const { access_token, refresh_token, expires_in } = response.data;
+      const { access_token, refresh_token: new_refresh_token, expires_in } = response.data;
+      const expiresAt = Date.now() + (expires_in * 1000);
 
-      // Update token info
-      this.tokenInfo = {
+      // Get existing token to preserve other fields
+      const existingToken = this.tokenStore.getUserToken(userId);
+      if (!existingToken) {
+        throw new Error('User token not found');
+      }
+
+      // Update token in store
+      const updatedToken: UserToken = {
+        ...existingToken,
         accessToken: access_token,
-        expiresAt: Date.now() + (expires_in * 1000)
+        refreshToken: new_refresh_token || refreshToken, // Use new refresh token if provided
+        expiresAt,
+        updatedAt: Date.now()
       };
 
-      // Update refresh token if a new one was provided
-      if (refresh_token) {
-        this.storedRefreshToken = refresh_token;
-      }
+      this.tokenStore.saveUserToken(updatedToken);
 
-      // Calculate expiry timestamp
-      const expiryTimestamp = Date.now() + (expires_in * 1000);
+      logger.info({ userId }, 'User token refreshed successfully');
 
-      // Update .env file
-      const updateData: Record<string, string> = {
-        SPOTIFY_USER_ACCESS_TOKEN: access_token,
-        SPOTIFY_TOKEN_EXPIRES_AT: expiryTimestamp.toString()
-      };
-      if (refresh_token) {
-        updateData.SPOTIFY_REFRESH_TOKEN = refresh_token;
-      }
-      await this.updateEnvFile(updateData);
-
-      logger.info('Access token refreshed successfully');
-      return access_token;
+      return { accessToken: access_token, expiresAt };
 
     } catch (error) {
       if (axios.isAxiosError(error)) {
@@ -345,57 +373,13 @@ export class AuthManager {
   }
 
   /**
-   * Legacy method for backward compatibility
+   * Validate token by making a test API call
    */
-  async refreshToken(): Promise<boolean> {
-    try {
-      await this.refreshAccessToken();
-      return true;
-    } catch (error) {
-      logger.error({ error }, 'Failed to refresh token');
-      return false;
-    }
-  }
-
-  /**
-   * Update .env file with new values
-   */
-  private async updateEnvFile(updates: Record<string, string>): Promise<void> {
-    const envPath = path.join(process.cwd(), '.env');
-    let envContent = '';
-
-    if (fs.existsSync(envPath)) {
-      envContent = fs.readFileSync(envPath, 'utf8');
-    }
-
-    // Update or add each key-value pair
-    for (const [key, value] of Object.entries(updates)) {
-      const regex = new RegExp(`^${key}=.*$`, 'm');
-      const newLine = `${key}="${value}"`;
-
-      if (regex.test(envContent)) {
-        envContent = envContent.replace(regex, newLine);
-      } else {
-        envContent += envContent.endsWith('\n') ? newLine + '\n' : '\n' + newLine + '\n';
-      }
-
-      // Update process.env
-      process.env[key] = value;
-    }
-
-    fs.writeFileSync(envPath, envContent);
-  }
-
-  /**
-   * Validate current token by making a test API call
-   */
-  async validateToken(token?: string): Promise<{ valid: boolean; user?: any; error?: string }> {
-    const testToken = token || (await this.getAccessToken());
-
+  async validateToken(token: string): Promise<{ valid: boolean; user?: any; error?: string }> {
     try {
       const response = await axios.get('https://api.spotify.com/v1/me', {
         headers: {
-          'Authorization': `Bearer ${testToken}`
+          'Authorization': `Bearer ${token}`
         }
       });
 
@@ -423,123 +407,108 @@ export class AuthManager {
   }
 
   /**
-   * Get auth status for health checks
+   * Get auth status for a specific session
    */
-  async getAuthStatus(): Promise<{
+  async getAuthStatus(sessionId?: string): Promise<{
     status: string;
-    tokenValid: boolean;
-    hasUserToken: boolean;
-    hasRefreshToken: boolean;
-    hasAuthCode: boolean;
-    hasClientCredentials: boolean;
-    details: any;
+    authenticated: boolean;
+    sessionId?: string;
+    userId?: string;
+    spotifyUserId?: string;
+    displayName?: string;
+    email?: string;
+    expiresAt?: string;
+    expiresInMinutes?: number;
   }> {
-    const env = getEnvVars();
-    const hasUserToken = !!env.SPOTIFY_USER_ACCESS_TOKEN;
-    const hasRefreshToken = !!env.SPOTIFY_REFRESH_TOKEN;
-    const hasAuthCode = !!env.SPOTIFY_AUTH_CODE;
-    const hasClientCredentials = !!this.clientId && !!this.clientSecret;
+    if (!sessionId) {
+      return {
+        status: 'No session provided',
+        authenticated: false
+      };
+    }
 
-    let tokenValid = false;
-    let authStatus = 'No user token';
-    let authDetails: any = {};
+    const token = this.tokenStore.getTokenBySession(sessionId);
 
-    if (hasUserToken) {
-      const validation = await this.validateToken(env.SPOTIFY_USER_ACCESS_TOKEN);
-      tokenValid = validation.valid;
+    if (!token) {
+      return {
+        status: 'Not authorized',
+        authenticated: false,
+        sessionId
+      };
+    }
 
-      if (tokenValid) {
-        authStatus = 'User token active';
+    // Check if token is still valid
+    const now = Date.now();
+    const isExpired = now >= token.expiresAt;
 
-        // Add expiry information if available
-        let expiryInfo = {};
-        if (env.SPOTIFY_TOKEN_EXPIRES_AT) {
-          const expiryTimestamp = parseInt(env.SPOTIFY_TOKEN_EXPIRES_AT);
-          const expiryDate = new Date(expiryTimestamp);
-          const now = Date.now();
-          const timeUntilExpiry = expiryTimestamp - now;
-          const minutesUntilExpiry = Math.floor(timeUntilExpiry / (1000 * 60));
-
-          expiryInfo = {
-            expiresAt: expiryDate.toISOString(),
-            expiresAtLocal: expiryDate.toLocaleString(),
-            expiresInMinutes: minutesUntilExpiry,
-            isExpired: timeUntilExpiry <= 0
+    if (isExpired) {
+      // Try to refresh
+      try {
+        await this.refreshUserToken(token.userId, token.refreshToken);
+        const refreshedToken = this.tokenStore.getUserToken(token.userId);
+        if (refreshedToken) {
+          return {
+            status: 'Authorized (token refreshed)',
+            authenticated: true,
+            sessionId,
+            userId: refreshedToken.userId,
+            spotifyUserId: refreshedToken.spotifyUserId,
+            displayName: refreshedToken.displayName,
+            email: refreshedToken.email,
+            expiresAt: new Date(refreshedToken.expiresAt).toISOString(),
+            expiresInMinutes: Math.floor((refreshedToken.expiresAt - now) / (1000 * 60))
           };
         }
-
-        authDetails = {
-          userToken: env.SPOTIFY_USER_ACCESS_TOKEN?.substring(0, 20) + '...',
-          redirectUri: this.redirectUri,
-          ...validation.user,
-          ...expiryInfo
+      } catch (error) {
+        logger.error({ error, sessionId, userId: token.userId }, 'Failed to refresh expired token');
+        return {
+          status: 'Token expired and refresh failed',
+          authenticated: false,
+          sessionId,
+          userId: token.userId
         };
-      } else {
-        authStatus = 'User token invalid/expired';
-        authDetails = { error: validation.error };
-
-        // Try to refresh if we have a refresh token
-        if (hasRefreshToken) {
-          try {
-            await this.refreshAccessToken();
-            // Re-read env vars to get the refreshed token
-            const refreshedEnv = getEnvVars();
-            const newValidation = await this.validateToken(refreshedEnv.SPOTIFY_USER_ACCESS_TOKEN);
-            if (newValidation.valid) {
-              tokenValid = true;
-              authStatus = 'Token refreshed successfully';
-
-              // Add expiry information for refreshed token
-              let refreshedExpiryInfo = {};
-              if (refreshedEnv.SPOTIFY_TOKEN_EXPIRES_AT) {
-                const expiryTimestamp = parseInt(refreshedEnv.SPOTIFY_TOKEN_EXPIRES_AT);
-                const expiryDate = new Date(expiryTimestamp);
-                const now = Date.now();
-                const timeUntilExpiry = expiryTimestamp - now;
-                const minutesUntilExpiry = Math.floor(timeUntilExpiry / (1000 * 60));
-
-                refreshedExpiryInfo = {
-                  expiresAt: expiryDate.toISOString(),
-                  expiresAtLocal: expiryDate.toLocaleString(),
-                  expiresInMinutes: minutesUntilExpiry,
-                  isExpired: timeUntilExpiry <= 0
-                };
-              }
-
-              authDetails = {
-                userToken: refreshedEnv.SPOTIFY_USER_ACCESS_TOKEN?.substring(0, 20) + '...',
-                redirectUri: this.redirectUri,
-                ...newValidation.user,
-                ...refreshedExpiryInfo
-              };
-            }
-          } catch (refreshError) {
-            authDetails.refreshError = refreshError instanceof Error ? refreshError.message : String(refreshError);
-          }
-        }
       }
-    } else if (hasAuthCode) {
-      authStatus = 'Auth code available but no token';
-      authDetails = { authCode: env.SPOTIFY_AUTH_CODE?.substring(0, 20) + '...' };
-    } else if (hasClientCredentials) {
-      authStatus = 'Ready for authorization';
-      authDetails = {
-        clientId: this.clientId.substring(0, 8) + '...',
-        redirectUri: this.redirectUri
-      };
-    } else {
-      authStatus = 'Missing client credentials';
-      authDetails = { error: 'SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET required' };
     }
 
     return {
-      status: authStatus,
-      tokenValid,
-      hasUserToken,
-      hasRefreshToken,
-      hasAuthCode,
-      hasClientCredentials,
-      details: authDetails
+      status: 'Authorized',
+      authenticated: true,
+      sessionId,
+      userId: token.userId,
+      spotifyUserId: token.spotifyUserId,
+      displayName: token.displayName,
+      email: token.email,
+      expiresAt: new Date(token.expiresAt).toISOString(),
+      expiresInMinutes: Math.floor((token.expiresAt - now) / (1000 * 60))
     };
+  }
+
+  /**
+   * Get token store statistics
+   */
+  getStats() {
+    return this.tokenStore.getStats();
+  }
+
+  /**
+   * Revoke authorization for a session
+   */
+  revokeSession(sessionId: string): void {
+    this.tokenStore.deleteSession(sessionId);
+    logger.info({ sessionId }, 'Session authorization revoked');
+  }
+
+  /**
+   * Get redirect URI
+   */
+  getRedirectUri(): string {
+    return this.redirectUri;
+  }
+
+  /**
+   * Close auth manager and cleanup resources
+   */
+  close(): void {
+    this.tokenStore.close();
   }
 }

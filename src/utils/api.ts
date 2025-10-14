@@ -7,18 +7,26 @@ export const BASE_URL = 'https://api.spotify.com/v1';
 
 export class SpotifyApi {
   private authManager: AuthManager;
+  private currentSessionId?: string;
 
   constructor(authManager: AuthManager) {
     this.authManager = authManager;
   }
 
+  /**
+   * Set the session ID for the current request context
+   */
+  setSessionId(sessionId: string | undefined): void {
+    this.currentSessionId = sessionId;
+  }
+
   async makeRequest<T>(
-    path: string, 
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', 
+    path: string,
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
     data?: any
   ): Promise<T> {
     try {
-      const token = await this.authManager.getAccessToken();
+      const token = await this.authManager.getAccessToken(this.currentSessionId);
       const response = await axios({
         method,
         url: `${BASE_URL}${path}`,

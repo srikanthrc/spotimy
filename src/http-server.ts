@@ -129,12 +129,13 @@ class SpotifyHttpServer {
   private playlistsHandler: PlaylistsHandler;
   private httpServer!: ReturnType<typeof createServer>;
   private transports = new Map<string, SSEServerTransport>();
+  private currentSessionId?: string;
 
   constructor() {
     this.server = new Server(
       {
-        name: 'artistlens',
-        version: '0.4.12',
+        name: 'spotify-mcp',
+        version: '0.5.0',
       },
       {
         capabilities: {
@@ -161,6 +162,10 @@ class SpotifyHttpServer {
       await this.cleanup();
       process.exit(0);
     });
+  }
+
+  private getCurrentSessionId(): string | undefined {
+    return this.currentSessionId;
   }
 
   private setupToolHandlers() {
@@ -783,9 +788,13 @@ class SpotifyHttpServer {
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
+        // Set session context for this request
+        const sessionId = this.getCurrentSessionId();
+        this.api.setSessionId(sessionId);
+
         switch (request.params.name) {
           case 'get_access_token': {
-            const token = await this.authManager.getAccessToken();
+            const token = await this.authManager.getAccessToken(sessionId);
             return {
               content: [{ type: 'text', text: token }],
             };
@@ -1035,16 +1044,20 @@ class SpotifyHttpServer {
         // Health check endpoint
         if (url.pathname === '/health') {
           try {
-            const authStatus = await this.authManager.getAuthStatus();
+            // Check session-specific auth if sessionId provided
+            const sessionId = url.searchParams.get('sessionId') || undefined;
+            const authStatus = await this.authManager.getAuthStatus(sessionId);
+            const stats = this.authManager.getStats();
 
             // Check ngrok forwarding status
             const ngrokStatus = await this.getNgrokStatus();
 
             const healthData = {
               status: 'ok',
-              message: 'Spotify MCP Server is running',
+              message: 'Spotify MCP Server is running (Multi-user mode)',
               timestamp: new Date().toISOString(),
               auth: authStatus,
+              stats: stats,
               forwarding: ngrokStatus
             };
 
@@ -1115,8 +1128,23 @@ class SpotifyHttpServer {
         // OAuth authorization endpoint
         if (url.pathname === '/auth') {
           if (req.method === 'GET') {
+            const sessionId = url.searchParams.get('sessionId');
+            if (!sessionId) {
+              res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(`
+                <html>
+                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
+                    <h1>❌ Missing Session ID</h1>
+                    <p>Please provide a sessionId query parameter to authorize a specific session.</p>
+                    <p style="color: #999;">Example: /auth?sessionId=your-session-id</p>
+                  </body>
+                </html>
+              `);
+              return;
+            }
+
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(this.authManager.getAuthorizationPageHtml());
+            res.end(this.authManager.getAuthorizationPageHtml(sessionId));
           } else {
             res.writeHead(405, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
@@ -1128,6 +1156,7 @@ class SpotifyHttpServer {
         if (url.pathname === '/callback') {
           if (req.method === 'GET') {
             const code = url.searchParams.get('code');
+            const state = url.searchParams.get('state');
             const error = url.searchParams.get('error');
 
             if (error) {
@@ -1137,21 +1166,19 @@ class SpotifyHttpServer {
                   <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
                     <h1 style="color: #e22134;">❌ Authorization Error</h1>
                     <p>Error: ${error}</p>
-                    <p>You can close this window and <a href="/auth" style="color: #1db954;">try again</a>.</p>
                   </body>
                 </html>
               `);
               return;
             }
 
-            if (!code) {
+            if (!code || !state) {
               res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
               res.end(`
                 <html>
                   <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
-                    <h1>❌ No Authorization Code</h1>
-                    <p>No authorization code was provided in the callback.</p>
-                    <p><a href="/auth" style="color: #1db954;">Try again</a></p>
+                    <h1>❌ Invalid Callback</h1>
+                    <p>Missing authorization code or state parameter.</p>
                   </body>
                 </html>
               `);
@@ -1159,22 +1186,22 @@ class SpotifyHttpServer {
             }
 
             try {
-              const tokenResult = await this.authManager.exchangeCodeForTokens(code);
+              const tokenResult = await this.authManager.exchangeCodeForTokens(code, state);
 
               res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
               res.end(`
                 <html>
                   <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
                     <h1 style="color: #1db954;">✅ Authorization Successful!</h1>
-                    <p>Your Spotify tokens have been saved and are ready to use.</p>
+                    <p>Your Spotify account has been linked to this session.</p>
                     <p>You can now close this window and use the MCP server.</p>
                     <div style="background: #282828; padding: 20px; border-radius: 10px; margin: 20px 0;">
-                      <p><strong>Access Token:</strong> ${tokenResult.accessToken.substring(0, 20)}...</p>
+                      <p><strong>Session ID:</strong> ${tokenResult.sessionId.substring(0, 16)}...</p>
+                      <p><strong>User ID:</strong> ${tokenResult.userId}</p>
                       <p><strong>Expires in:</strong> ${Math.floor(tokenResult.expiresIn / 60)} minutes</p>
-                      <p><strong>Refresh Token:</strong> Available</p>
                     </div>
                     <p style="margin-top: 20px;">
-                      <a href="/health" style="background: #1db954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 25px; font-weight: bold;">Check Server Status</a>
+                      <a href="/health?sessionId=${tokenResult.sessionId}" style="background: #1db954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 25px; font-weight: bold;">Check Session Status</a>
                     </p>
                   </body>
                 </html>
@@ -1200,22 +1227,28 @@ class SpotifyHttpServer {
           return;
         }
 
-        // Token refresh endpoint
-        if (url.pathname === '/refresh-token') {
+        // Session revoke endpoint
+        if (url.pathname === '/revoke') {
           if (req.method === 'POST') {
+            const sessionId = url.searchParams.get('sessionId');
+            if (!sessionId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing sessionId parameter' }));
+              return;
+            }
+
             try {
-              const newToken = await this.authManager.refreshAccessToken();
+              this.authManager.revokeSession(sessionId);
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
                 success: true,
-                message: 'Token refreshed successfully',
-                token: newToken.substring(0, 20) + '...'
+                message: 'Session authorization revoked successfully'
               }));
             } catch (error) {
               res.writeHead(500, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({
                 success: false,
-                error: 'Failed to refresh token',
+                error: 'Failed to revoke session',
                 details: error instanceof Error ? error.message : String(error)
               }));
             }
@@ -1233,13 +1266,18 @@ class SpotifyHttpServer {
             const transport = new SSEServerTransport('/mcp', res);
             this.transports.set(transport.sessionId, transport);
 
+            // Store sessionId for this transport
+            const sessionId = transport.sessionId;
+            logger.info({ sessionId }, 'New MCP session connected');
+
             // Set up transport event handlers
             transport.onclose = () => {
-              this.transports.delete(transport.sessionId);
+              this.transports.delete(sessionId);
+              logger.info({ sessionId }, 'MCP session disconnected');
             };
 
             transport.onerror = (error) => {
-              logger.error({ error }, 'SSE Error');
+              logger.error({ error, sessionId }, 'SSE Error');
             };
 
             // Connect the MCP server to this transport
@@ -1262,7 +1300,13 @@ class SpotifyHttpServer {
               return;
             }
 
+            // Set current session ID for this request
+            this.currentSessionId = sessionId;
+
             await transport.handlePostMessage(req, res);
+
+            // Clear session ID after request
+            this.currentSessionId = undefined;
           } else {
             res.writeHead(405, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Method not allowed' }));
@@ -1285,14 +1329,14 @@ class SpotifyHttpServer {
   async listen(port: number = 3000, host: string = '127.0.0.1') {
     return new Promise<void>((resolve, reject) => {
       this.httpServer.listen(port, host, () => {
-        logger.info({ host, port }, 'Spotify MCP HTTP server running');
+        logger.info({ host, port }, 'Spotify MCP HTTP server running (Multi-user mode)');
         logger.info('Endpoints available:');
-        logger.info('  GET  /mcp           - MCP SSE connection');
-        logger.info('  POST /mcp          - MCP message endpoint');
-        logger.info('  GET  /health       - Health check');
-        logger.info('  GET  /auth         - Start Spotify OAuth flow');
-        logger.info('  GET  /callback     - Spotify OAuth callback');
-        logger.info('  POST /refresh-token - Refresh Spotify access token');
+        logger.info('  GET  /mcp                      - MCP SSE connection');
+        logger.info('  POST /mcp                      - MCP message endpoint');
+        logger.info('  GET  /health?sessionId=<id>    - Health check (session-specific)');
+        logger.info('  GET  /auth?sessionId=<id>      - Start Spotify OAuth for session');
+        logger.info('  GET  /callback                 - Spotify OAuth callback');
+        logger.info('  POST /revoke?sessionId=<id>    - Revoke session authorization');
         resolve();
       });
 
@@ -1316,6 +1360,9 @@ class SpotifyHttpServer {
 
     // Close MCP server
     await this.server.close();
+
+    // Close auth manager
+    this.authManager.close();
   }
 }
 
