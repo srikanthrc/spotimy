@@ -40,9 +40,12 @@ export class AuthManager {
     this.tokenStore = new TokenStore(dataDir || process.env.TOKEN_STORE_PATH || './data');
 
     // Build redirect URI from environment variables
-    const host = process.env.HTTP_HOST || '127.0.0.1';
-    const port = process.env.HTTP_PORT || '3001';
-    this.redirectUri = `http://${host}:${port}/callback`;
+    // Allow explicit SPOTIFY_REDIRECT_URI for ngrok/production deployments
+    this.redirectUri = process.env.SPOTIFY_REDIRECT_URI || (() => {
+      const host = process.env.HTTP_HOST || '127.0.0.1';
+      const port = process.env.HTTP_PORT || '3001';
+      return `http://${host}:${port}/callback`;
+    })();
 
     this.scopes = [
       'playlist-read-private',

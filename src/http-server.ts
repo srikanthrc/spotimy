@@ -129,6 +129,7 @@ class SpotifyHttpServer {
   private playlistsHandler: PlaylistsHandler;
   private httpServer!: ReturnType<typeof createServer>;
   private transports = new Map<string, SSEServerTransport>();
+  private sessionIdMapping = new Map<string, string>(); // Maps transport sessionId -> custom sessionId
   private currentSessionId?: string;
 
   constructor() {
@@ -171,6 +172,15 @@ class SpotifyHttpServer {
   private setupToolHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
+        {
+          name: 'get_session_info',
+          description: 'Get current session ID and authentication status. Use this to find your session ID for authorization.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            required: []
+          },
+        },
         {
           name: 'get_access_token',
           description: 'Get a valid Spotify access token for API requests',
@@ -793,6 +803,18 @@ class SpotifyHttpServer {
         this.api.setSessionId(sessionId);
 
         switch (request.params.name) {
+          case 'get_session_info': {
+            const authStatus = await this.authManager.getAuthStatus(sessionId);
+            const info = {
+              sessionId: sessionId || 'unknown',
+              authUrl: sessionId ? `${process.env.NGROK_DOMAIN ? 'https://' + process.env.NGROK_DOMAIN : 'http://localhost:' + (process.env.HTTP_PORT || '3001')}/auth?sessionId=${sessionId}` : 'Connect first to get session ID',
+              ...authStatus
+            };
+            return {
+              content: [{ type: 'text', text: JSON.stringify(info, null, 2) }],
+            };
+          }
+
           case 'get_access_token': {
             const token = await this.authManager.getAccessToken(sessionId);
             return {
@@ -1262,22 +1284,36 @@ class SpotifyHttpServer {
         // MCP endpoint
         if (url.pathname === '/mcp') {
           if (req.method === 'GET') {
+            // Check if client provided a sessionId
+            const clientSessionId = url.searchParams.get('sessionId');
+
             // Initialize SSE connection
             const transport = new SSEServerTransport('/mcp', res);
+
+            // Always store transport by its auto-generated sessionId (for POST handling)
             this.transports.set(transport.sessionId, transport);
 
-            // Store sessionId for this transport
-            const sessionId = transport.sessionId;
-            logger.info({ sessionId }, 'New MCP session connected');
+            // If client provided a custom sessionId, create a mapping and also store by custom ID
+            if (clientSessionId) {
+              this.sessionIdMapping.set(transport.sessionId, clientSessionId);
+              this.transports.set(clientSessionId, transport);
+            }
+
+            const displaySessionId = clientSessionId || transport.sessionId;
+            logger.info({ sessionId: displaySessionId, transportSessionId: transport.sessionId, isCustomSession: !!clientSessionId }, 'New MCP session connected');
 
             // Set up transport event handlers
             transport.onclose = () => {
-              this.transports.delete(sessionId);
-              logger.info({ sessionId }, 'MCP session disconnected');
+              this.transports.delete(transport.sessionId);
+              if (clientSessionId) {
+                this.transports.delete(clientSessionId);
+                this.sessionIdMapping.delete(transport.sessionId);
+              }
+              logger.info({ sessionId: displaySessionId }, 'MCP session disconnected');
             };
 
             transport.onerror = (error) => {
-              logger.error({ error, sessionId }, 'SSE Error');
+              logger.error({ error, sessionId: displaySessionId }, 'SSE Error');
             };
 
             // Connect the MCP server to this transport
@@ -1285,22 +1321,26 @@ class SpotifyHttpServer {
 
           } else if (req.method === 'POST') {
             // Handle incoming messages
-            const sessionId = url.searchParams.get('sessionId');
+            const transportSessionId = url.searchParams.get('sessionId');
 
-            if (!sessionId) {
+            if (!transportSessionId) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Missing sessionId parameter' }));
               return;
             }
 
-            const transport = this.transports.get(sessionId);
+            const transport = this.transports.get(transportSessionId);
             if (!transport) {
               res.writeHead(404, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Session not found' }));
               return;
             }
 
-            // Set current session ID for this request
+            // Resolve to custom sessionId if one was provided during connection
+            const customSessionId = this.sessionIdMapping.get(transportSessionId);
+            const sessionId = customSessionId || transportSessionId;
+
+            // Set current session ID for this request (use custom ID if available)
             this.currentSessionId = sessionId;
 
             await transport.handlePostMessage(req, res);

@@ -15,6 +15,7 @@ services:
       # Spotify API credentials (set these in .env file)
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
       - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - SPOTIFY_REDIRECT_URI=${SPOTIFY_REDIRECT_URI:-}
 
       # Token storage configuration (multi-user mode)
       - TOKEN_STORE_PATH=/app/data
@@ -24,9 +25,9 @@ services:
       - NGROK_AUTH_TOKEN=${NGROK_AUTH_TOKEN:-}
       - NGROK_DOMAIN=${NGROK_DOMAIN:-}
     volumes:
-      # Persist encrypted token database
+      # Persist encrypted token database (SQLite)
       - spotimy_data:/app/data
-      # Mount .env file as read-only (tokens no longer stored here)
+      # Mount .env file as read-only for config (API credentials, ngrok settings)
       - ./.env:/app/.env:ro
     restart: unless-stopped
     healthcheck:

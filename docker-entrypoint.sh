@@ -21,29 +21,8 @@ echo "Starting Spotify MCP Server with ngrok tunnel..."
 echo "HTTP Host: $HTTP_HOST"
 echo "HTTP Port: $HTTP_PORT"
 
-# Ensure data directory exists and set up .env persistence
+# Ensure data directory exists for encrypted token storage
 mkdir -p /app/data
-
-# Ensure .env file is writable and properly set up
-if [ -f "/app/.env" ]; then
-    # Make sure the mounted .env file is writable
-    chmod 644 /app/.env
-    echo "Made .env file writable for token updates"
-    
-    # Also backup to persistent storage
-    cp /app/.env /app/data/.env.backup
-    echo "Backed up .env to persistent storage"
-else
-    # If no .env file exists, create one in persistent storage and link it
-    if [ -f "/app/data/.env" ]; then
-        ln -sf /app/data/.env /app/.env
-        echo "Linked existing .env from persistent storage"
-    else
-        touch /app/data/.env
-        ln -sf /app/data/.env /app/.env
-        echo "Created new .env file in persistent storage"
-    fi
-fi
 
 # Configure ngrok if auth token is provided
 if [ -n "$NGROK_AUTH_TOKEN" ]; then
