@@ -1,0 +1,7 @@
+---
+description: Use Bun instead of Node.js, npm, pnpm, or vite.
+alwaysApply: true
+---
+Be efficient with rebuilding/restarting docker containers. 
+- do `docker compose up --build -d` over 
+     `docker compose build && docker compose up -d`

@@ -45,6 +45,24 @@ import { PlaylistArgs, PlaylistTracksArgs, PlaylistItemsArgs, ModifyPlaylistArgs
 import { SearchArgs as SearchArgsType } from './types/search.js';
 
 class SpotifyHttpServer {
+  private getFaviconPath(): string {
+    // Try to find favicon in multiple locations (dev vs prod)
+    const possiblePaths = [
+      path.join(process.cwd(), 'src', 'static', 'favicon.png'),        // Dev: from project root
+      path.join(process.cwd(), 'build', 'static', 'favicon.png'),      // Prod: from project root
+      path.join(__dirname, 'static', 'favicon.png'),                   // Relative to current file
+      path.join(__dirname, '..', 'src', 'static', 'favicon.png'),      // One level up
+    ];
+
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    }
+
+    throw new Error('Favicon not found in any expected location');
+  }
+
   private validateArgs<T>(args: Record<string, unknown> | undefined, requiredFields: string[]): T {
     if (!args) {
       throw new McpError(
@@ -1147,6 +1165,24 @@ class SpotifyHttpServer {
           return;
         }
 
+        // Favicon endpoint
+        if (url.pathname === '/favicon.ico' || url.pathname === '/favicon.png') {
+          try {
+            const faviconPath = this.getFaviconPath();
+            const faviconData = fs.readFileSync(faviconPath);
+            res.writeHead(200, {
+              'Content-Type': 'image/png',
+              'Cache-Control': 'public, max-age=31536000',
+            });
+            res.end(faviconData);
+          } catch (error) {
+            logger.error({ error }, 'Failed to serve favicon');
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
+            res.end('Favicon not found');
+          }
+          return;
+        }
+
         // OAuth authorization endpoint
         if (url.pathname === '/auth') {
           if (req.method === 'GET') {
@@ -1377,6 +1413,7 @@ class SpotifyHttpServer {
         logger.info('  GET  /auth?sessionId=<id>      - Start Spotify OAuth for session');
         logger.info('  GET  /callback                 - Spotify OAuth callback');
         logger.info('  POST /revoke?sessionId=<id>    - Revoke session authorization');
+        logger.info('  GET  /favicon.ico              - Favicon image');
         resolve();
       });
 

@@ -23,6 +23,9 @@ COPY . .
 # Build the TypeScript code explicitly
 RUN bunx tsc && chmod +x build/index.js
 
+# Copy static assets to build directory
+RUN mkdir -p build/static && cp -r src/static/* build/static/
+
 # Create a directory for auth tokens (persistent storage)
 RUN mkdir -p /app/data
 
