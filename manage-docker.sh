@@ -39,7 +39,7 @@ show_help() {
 
 start_services() {
     echo "🚀 Starting Spotify MCP Server..."
-    $DOCKER_COMPOSE_CMD up -d
+    $DOCKER_COMPOSE_CMD up -d --build
     echo "✅ Services started!"
     echo ""
     show_urls

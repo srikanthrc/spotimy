@@ -13,9 +13,10 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import packageJson from '../package.json' assert { type: 'json' };
 
+import logger from './utils/logger.js';
 import { AuthManager } from './utils/auth.js';
 import { SpotifyApi } from './utils/api.js';
-import logger from './utils/logger.js';
+import { ClientRegistrationManager } from './utils/client-registration.js';
 import { ArtistsHandler } from './handlers/artists.js';
 import { AlbumsHandler } from './handlers/albums.js';
 import { TracksHandler } from './handlers/tracks.js';
@@ -168,6 +169,7 @@ class SpotifyHttpServer {
 
   private server: Server;
   private authManager: AuthManager;
+  private clientRegistrationManager: ClientRegistrationManager;
   private api: SpotifyApi;
   private searchHandler: SearchHandler;
   private artistsHandler: ArtistsHandler;
@@ -194,6 +196,7 @@ class SpotifyHttpServer {
     );
 
     this.authManager = new AuthManager();
+    this.clientRegistrationManager = new ClientRegistrationManager();
     this.api = new SpotifyApi(this.authManager);
     this.searchHandler = new SearchHandler(this.api);
     this.artistsHandler = new ArtistsHandler(this.api);
@@ -1127,8 +1130,9 @@ class SpotifyHttpServer {
 
         // Set CORS headers
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Mcp-Session-Id');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id');
+        res.setHeader('Access-Control-Expose-Headers', 'WWW-Authenticate');
 
         if (req.method === 'OPTIONS') {
           res.writeHead(200);
@@ -1243,23 +1247,89 @@ class SpotifyHttpServer {
         // OAuth authorization endpoint
         if (url.pathname === '/auth') {
           if (req.method === 'GET') {
+            // Support both sessionId (our custom flow) and standard OAuth parameters (MCP Inspector)
             const sessionId = url.searchParams.get('sessionId');
-            if (!sessionId) {
-              res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-              res.end(`
-                <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
-                    <h1>❌ Missing Session ID</h1>
-                    <p>Please provide a sessionId query parameter to authorize a specific session.</p>
-                    <p style="color: #999;">Example: /auth?sessionId=your-session-id</p>
-                  </body>
-                </html>
-              `);
+            const clientId = url.searchParams.get('client_id');
+            const redirectUri = url.searchParams.get('redirect_uri');
+            const state = url.searchParams.get('state');
+            const responseType = url.searchParams.get('response_type');
+            const scope = url.searchParams.get('scope');
+            const codeChallenge = url.searchParams.get('code_challenge');
+            const codeChallengeMethod = url.searchParams.get('code_challenge_method');
+
+            // If standard OAuth parameters are provided (client_id + redirect_uri)
+            if (clientId && redirectUri && state) {
+              // Validate the registered client
+              const client = this.clientRegistrationManager.getClient(clientId);
+              if (!client) {
+                res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end(`
+                  <html>
+                    <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
+                      <h1>❌ Invalid Client</h1>
+                      <p>The provided client_id is not registered.</p>
+                    </body>
+                  </html>
+                `);
+                return;
+              }
+
+              // Validate redirect_uri matches registered URIs
+              if (!client.redirect_uris.includes(redirectUri)) {
+                res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+                res.end(`
+                  <html>
+                    <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
+                      <h1>❌ Invalid Redirect URI</h1>
+                      <p>The provided redirect_uri does not match any registered URIs for this client.</p>
+                    </body>
+                  </html>
+                `);
+                return;
+              }
+
+              // Generate a session ID for this client if not provided
+              const generatedSessionId = sessionId || `client_${clientId}_${state}`;
+
+              // Store the client authorization request
+              this.authManager.storePendingOAuthRequest(generatedSessionId, {
+                clientId,
+                redirectUri,
+                state,
+                responseType: responseType || 'code',
+                scope: scope || client.scope || '',
+                codeChallenge,
+                codeChallengeMethod
+              });
+
+              // Show authorization page
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(this.authManager.getAuthorizationPageHtml(generatedSessionId));
               return;
             }
 
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(this.authManager.getAuthorizationPageHtml(sessionId));
+            // Legacy flow: sessionId parameter
+            if (sessionId) {
+              res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+              res.end(this.authManager.getAuthorizationPageHtml(sessionId));
+              return;
+            }
+
+            // No valid parameters provided
+            res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`
+              <html>
+                <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
+                  <h1>❌ Missing Parameters</h1>
+                  <p>Please provide either:</p>
+                  <ul style="text-align: left; max-width: 400px; margin: 20px auto;">
+                    <li><strong>Legacy:</strong> sessionId query parameter</li>
+                    <li><strong>OAuth 2.0:</strong> client_id, redirect_uri, and state parameters</li>
+                  </ul>
+                  <p style="color: #999;">Example: /auth?client_id=...&redirect_uri=...&state=...</p>
+                </body>
+              </html>
+            `);
           } else {
             res.writeHead(405, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
@@ -1303,6 +1373,37 @@ class SpotifyHttpServer {
             try {
               const tokenResult = await this.authManager.exchangeCodeForTokens(code, state);
 
+              // Check if this was initiated by a registered OAuth client
+              const oauthRequest = this.authManager.getPendingOAuthRequest(tokenResult.sessionId);
+
+              if (oauthRequest) {
+                // Clear the pending request
+                this.authManager.clearPendingOAuthRequest(tokenResult.sessionId);
+
+                // Generate our own authorization code for the client
+                const authCode = this.authManager.generateAuthorizationCode(
+                  tokenResult.sessionId,
+                  oauthRequest.clientId,
+                  oauthRequest.redirectUri
+                );
+
+                // Redirect back to the registered client's redirect_uri with our authorization code
+                const redirectUrl = new URL(oauthRequest.redirectUri);
+                redirectUrl.searchParams.set('code', authCode);
+                redirectUrl.searchParams.set('state', oauthRequest.state);
+
+                logger.info({
+                  sessionId: tokenResult.sessionId,
+                  clientId: oauthRequest.clientId,
+                  redirectUri: oauthRequest.redirectUri
+                }, 'Redirecting to registered client callback with authorization code');
+
+                res.writeHead(302, { 'Location': redirectUrl.toString() });
+                res.end();
+                return;
+              }
+
+              // Legacy flow: show success page
               res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
               res.end(`
                 <html>
@@ -1414,6 +1515,7 @@ class SpotifyHttpServer {
             issuer: baseUrl,
             authorization_endpoint: `${baseUrl}/auth`,
             token_endpoint: `${baseUrl}/token`,
+            registration_endpoint: `${baseUrl}/register`,
             response_types_supported: ['code'],
             grant_types_supported: ['authorization_code', 'refresh_token'],
             code_challenge_methods_supported: ['S256'],
@@ -1430,12 +1532,13 @@ class SpotifyHttpServer {
         if (url.pathname === '/authorize') {
           if (req.method === 'GET') {
             const baseUrl = this.getBaseUrl(req);
-            
+
             // OAuth 2.1 / OpenID Connect Discovery metadata
             const metadata = {
               issuer: baseUrl,
               authorization_endpoint: `${baseUrl}/auth`,
               token_endpoint: `${baseUrl}/token`,
+              registration_endpoint: `${baseUrl}/register`,
               response_types_supported: ['code'],
               grant_types_supported: ['authorization_code', 'refresh_token'],
               code_challenge_methods_supported: ['S256'],
@@ -1452,16 +1555,264 @@ class SpotifyHttpServer {
           return;
         }
 
+        // Dynamic Client Registration endpoint (RFC 7591)
+        if (url.pathname === '/register') {
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => {
+              body += chunk.toString();
+            });
+
+            req.on('end', () => {
+              try {
+                const registrationRequest = JSON.parse(body);
+                const baseUrl = this.getBaseUrl(req);
+
+                // Register the client
+                const registrationResponse = this.clientRegistrationManager.registerClient(registrationRequest);
+
+                // Add registration_client_uri
+                registrationResponse.registration_client_uri = `${baseUrl}/register/${registrationResponse.client_id}`;
+
+                res.writeHead(201, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(registrationResponse, null, 2));
+
+                logger.info({
+                  clientId: registrationResponse.client_id,
+                  clientName: registrationRequest.client_name
+                }, 'Client registered via dynamic registration');
+              } catch (error) {
+                logger.error({ error }, 'Client registration error');
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  error: 'invalid_client_metadata',
+                  error_description: error instanceof Error ? error.message : 'Invalid request body'
+                }));
+              }
+            });
+          } else {
+            res.writeHead(405, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }));
+          }
+          return;
+        }
+
         // Token endpoint (for OAuth token exchange)
         if (url.pathname === '/token') {
           if (req.method === 'POST') {
-            // This endpoint would handle token exchange
-            // For now, redirect to the actual Spotify OAuth flow
-            res.writeHead(501, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ 
-              error: 'not_implemented',
-              error_description: 'Token exchange happens via Spotify OAuth callback. Use /auth?sessionId=<id> to initiate the flow.'
-            }));
+            logger.info('Token endpoint POST request received');
+            let body = '';
+            let requestComplete = false;
+
+            // Set a timeout for reading the request body
+            const timeout = setTimeout(() => {
+              if (!requestComplete) {
+                logger.error('Token request body read timeout');
+                if (!res.headersSent) {
+                  res.writeHead(408, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    error: 'request_timeout',
+                    error_description: 'Request body read timeout'
+                  }));
+                }
+              }
+            }, 10000); // 10 second timeout
+
+            req.on('error', (error) => {
+              clearTimeout(timeout);
+              logger.error({ error }, 'Error reading token request body');
+              if (!res.headersSent) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  error: 'server_error',
+                  error_description: 'Failed to read request body'
+                }));
+              }
+            });
+
+            req.on('data', chunk => {
+              body += chunk.toString();
+              logger.debug({ chunkSize: chunk.length, totalSize: body.length }, 'Received data chunk');
+            });
+
+            req.on('end', async () => {
+              clearTimeout(timeout);
+              requestComplete = true;
+              logger.info('Token request body fully received');
+              try {
+                logger.info({
+                  rawBody: body.substring(0, 300),
+                  bodyLength: body.length,
+                  contentType: req.headers['content-type'],
+                  authorization: req.headers['authorization'] ? 'Present' : 'Missing'
+                }, 'Token exchange raw request');
+
+                let grantType, code, redirectUri, clientId, clientSecret;
+
+                // Check for client credentials in Authorization header (HTTP Basic Auth)
+                const authHeader = req.headers['authorization'];
+                if (authHeader && authHeader.startsWith('Basic ')) {
+                  try {
+                    const base64Credentials = authHeader.substring(6);
+                    const credentials = Buffer.from(base64Credentials, 'base64').toString('utf-8');
+                    const [headerClientId, headerClientSecret] = credentials.split(':');
+                    clientId = headerClientId;
+                    clientSecret = headerClientSecret;
+                    logger.info({ clientId, hasSecret: !!clientSecret }, 'Client credentials from Authorization header');
+                  } catch (error) {
+                    logger.error({ error }, 'Failed to parse Authorization header');
+                  }
+                }
+
+                // Try to parse as JSON first, then fall back to form-urlencoded
+                const contentType = req.headers['content-type'] || '';
+                if (contentType.includes('application/json')) {
+                  const jsonBody = JSON.parse(body);
+                  grantType = jsonBody.grant_type;
+                  code = jsonBody.code;
+                  redirectUri = jsonBody.redirect_uri;
+                  // Override with body values if present
+                  clientId = jsonBody.client_id || clientId;
+                  clientSecret = jsonBody.client_secret || clientSecret;
+                } else {
+                  // Parse as form-urlencoded
+                  const params = new URLSearchParams(body);
+
+                  // Log all params for debugging
+                  const allParams: Record<string, string> = {};
+                  for (const [key, value] of params.entries()) {
+                    allParams[key] = value.substring(0, 50); // Truncate for logging
+                  }
+                  logger.info({ allParams }, 'All URL parameters');
+
+                  grantType = params.get('grant_type');
+                  code = params.get('code');
+                  redirectUri = params.get('redirect_uri');
+                  // Use body values if present, otherwise use header values
+                  clientId = params.get('client_id') || clientId;
+                  clientSecret = params.get('client_secret') || clientSecret;
+
+                  // Try alternative parameter names if standard ones don't work
+                  if (!clientId) {
+                    clientId = params.get('clientId') || params.get('client-id');
+                  }
+                  if (!clientSecret) {
+                    clientSecret = params.get('clientSecret') || params.get('client-secret');
+                  }
+                  if (!redirectUri) {
+                    redirectUri = params.get('redirectUri') || params.get('redirect-uri');
+                  }
+                }
+
+                logger.info({
+                  grantType,
+                  clientId,
+                  hasCode: !!code,
+                  hasRedirectUri: !!redirectUri,
+                  hasClientSecret: !!clientSecret,
+                  contentType
+                }, 'Token exchange request parsed');
+
+                // Validate grant type
+                if (grantType !== 'authorization_code') {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    error: 'unsupported_grant_type',
+                    error_description: 'Only authorization_code grant type is supported'
+                  }));
+                  return;
+                }
+
+                // Validate required parameters
+                if (!code || !redirectUri || !clientId) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    error: 'invalid_request',
+                    error_description: 'Missing required parameters: code, redirect_uri, client_id'
+                  }));
+                  return;
+                }
+
+                // Validate client credentials
+                if (!this.clientRegistrationManager.validateClient(clientId, clientSecret || '')) {
+                  res.writeHead(401, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    error: 'invalid_client',
+                    error_description: 'Invalid client credentials'
+                  }));
+                  return;
+                }
+
+                // Get the registered client to validate redirect_uri
+                const client = this.clientRegistrationManager.getClient(clientId);
+                if (!client) {
+                  res.writeHead(401, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    error: 'invalid_client',
+                    error_description: 'Client not found'
+                  }));
+                  return;
+                }
+
+                // Validate redirect_uri
+                if (!client.redirect_uris.includes(redirectUri)) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    error: 'invalid_grant',
+                    error_description: 'Invalid redirect_uri'
+                  }));
+                  return;
+                }
+
+                // Validate and consume the authorization code
+                const sessionId = this.authManager.validateAuthorizationCode(code, clientId, redirectUri);
+
+                if (!sessionId) {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    error: 'invalid_grant',
+                    error_description: 'Authorization code is invalid, expired, or has already been used'
+                  }));
+                  return;
+                }
+
+                // Get the access token for this session
+                const accessToken = await this.authManager.getAccessToken(sessionId);
+                const authStatus = await this.authManager.getAuthStatus(sessionId);
+
+                // Calculate expires_in from expiresInMinutes
+                const expiresIn = authStatus.expiresInMinutes
+                  ? authStatus.expiresInMinutes * 60
+                  : 3600;
+
+                // Build token response
+                const tokenResponse = {
+                  access_token: accessToken,
+                  token_type: 'Bearer',
+                  expires_in: expiresIn,
+                  scope: client.scope || this.REQUIRED_SCOPES,
+                  // Note: We're using Spotify's tokens directly, so we don't have our own refresh token
+                  // The session management handles token refresh automatically
+                };
+
+                logger.info({
+                  clientId,
+                  sessionId,
+                  expiresIn: tokenResponse.expires_in
+                }, 'Token exchange successful');
+
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(tokenResponse));
+
+              } catch (error) {
+                logger.error({ error }, 'Token exchange error');
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  error: 'server_error',
+                  error_description: error instanceof Error ? error.message : 'Internal server error'
+                }));
+              }
+            });
           } else {
             res.writeHead(405, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }));
@@ -1473,11 +1824,32 @@ class SpotifyHttpServer {
         if (url.pathname === '/mcp') {
           if (req.method === 'GET') {
             // Check if client provided a sessionId
-            const clientSessionId = url.searchParams.get('sessionId');
-            
-            // Check for Authorization header
+            let clientSessionId = url.searchParams.get('sessionId');
+
+            // Check for Authorization header (Bearer token)
             const authHeader = req.headers['authorization'];
-            const hasValidAuth = clientSessionId || authHeader;
+            if (!clientSessionId && authHeader && authHeader.startsWith('Bearer ')) {
+              // Extract access token from Bearer header
+              const accessToken = authHeader.substring(7);
+
+              // Find session by access token
+              const allSessions = this.authManager.getAllSessions();
+              for (const session of allSessions) {
+                try {
+                  const sessionToken = await this.authManager.getAccessToken(session.sessionId);
+                  if (sessionToken === accessToken) {
+                    clientSessionId = session.sessionId;
+                    logger.info({ sessionId: clientSessionId }, 'Session identified from Bearer token');
+                    break;
+                  }
+                } catch (error) {
+                  // Skip sessions that fail to get token
+                  continue;
+                }
+              }
+            }
+
+            const hasValidAuth = !!clientSessionId;
 
             // If no authentication provided, return 401 with discovery headers
             if (!hasValidAuth) {
@@ -1535,7 +1907,9 @@ class SpotifyHttpServer {
             }
 
             const displaySessionId = clientSessionId || transport.sessionId;
-            logger.info({ sessionId: displaySessionId, transportSessionId: transport.sessionId, isCustomSession: !!clientSessionId }, 'New MCP session connected (authenticated)');
+            logger.info({ sessionId: displaySessionId, transportSessionId: transport.sessionId, isCustomSession: !!clientSessionId }, 
+              'New MCP session connected (authenticated)'
+            );
 
             // Set up transport event handlers
             transport.onclose = () => {
@@ -1639,6 +2013,7 @@ class SpotifyHttpServer {
         logger.info('  GET  /.well-known/oauth-protected-resource   - Protected resource metadata');
         logger.info('  GET  /.well-known/oauth-authorization-server - OAuth 2.0 AS metadata (RFC 8414)');
         logger.info('  GET  /authorize                              - Authorization server metadata');
+        logger.info('  POST /register                               - Dynamic client registration (RFC 7591)');
         logger.info('  POST /token                                  - Token endpoint (not implemented)');
         logger.info('');
         logger.info('OAuth Flow:');
@@ -1675,6 +2050,9 @@ class SpotifyHttpServer {
 
     // Close auth manager
     this.authManager.close();
+
+    // Close client registration manager
+    this.clientRegistrationManager.close();
   }
 }
 

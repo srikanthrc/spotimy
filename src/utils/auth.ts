@@ -21,6 +21,22 @@ export class AuthManager {
   private readonly redirectUri: string;
   private readonly scopes: string[];
   private pendingAuthStates = new Map<string, { sessionId: string; expiresAt: number }>();
+  private pendingOAuthRequests = new Map<string, {
+    clientId: string;
+    redirectUri: string;
+    state: string;
+    responseType: string;
+    scope: string;
+    codeChallenge?: string | null;
+    codeChallengeMethod?: string | null;
+    expiresAt: number;
+  }>();
+  private authorizationCodes = new Map<string, {
+    sessionId: string;
+    clientId: string;
+    redirectUri: string;
+    expiresAt: number;
+  }>();
 
   // Fallback client credentials token (for unauthenticated requests)
   private clientCredentialsToken: TokenInfo | null = null;
@@ -160,6 +176,105 @@ export class AuthManager {
     });
 
     return `https://accounts.spotify.com/authorize?${params.toString()}`;
+  }
+
+  /**
+   * Store pending OAuth request from dynamically registered client
+   */
+  storePendingOAuthRequest(sessionId: string, request: {
+    clientId: string;
+    redirectUri: string;
+    state: string;
+    responseType: string;
+    scope: string;
+    codeChallenge?: string | null;
+    codeChallengeMethod?: string | null;
+  }): void {
+    this.pendingOAuthRequests.set(sessionId, {
+      ...request,
+      expiresAt: Date.now() + 10 * 60 * 1000  // 10 minutes
+    });
+
+    logger.info({
+      sessionId,
+      clientId: request.clientId,
+      redirectUri: request.redirectUri
+    }, 'Stored pending OAuth request for registered client');
+  }
+
+  /**
+   * Get pending OAuth request for a session
+   */
+  getPendingOAuthRequest(sessionId: string) {
+    return this.pendingOAuthRequests.get(sessionId);
+  }
+
+  /**
+   * Clear pending OAuth request for a session
+   */
+  clearPendingOAuthRequest(sessionId: string): void {
+    this.pendingOAuthRequests.delete(sessionId);
+  }
+
+  /**
+   * Generate and store an authorization code for a registered client
+   */
+  generateAuthorizationCode(sessionId: string, clientId: string, redirectUri: string): string {
+    const code = crypto.randomBytes(32).toString('base64url');
+
+    this.authorizationCodes.set(code, {
+      sessionId,
+      clientId,
+      redirectUri,
+      expiresAt: Date.now() + 10 * 60 * 1000  // 10 minutes
+    });
+
+    logger.info({
+      code: code.substring(0, 20) + '...',
+      sessionId,
+      clientId
+    }, 'Generated authorization code for registered client');
+
+    return code;
+  }
+
+  /**
+   * Validate and consume authorization code
+   */
+  validateAuthorizationCode(code: string, clientId: string, redirectUri: string): string | null {
+    const authCode = this.authorizationCodes.get(code);
+
+    if (!authCode) {
+      logger.warn({ code: code.substring(0, 20) + '...' }, 'Authorization code not found');
+      return null;
+    }
+
+    // Check expiration
+    if (Date.now() > authCode.expiresAt) {
+      this.authorizationCodes.delete(code);
+      logger.warn({ code: code.substring(0, 20) + '...' }, 'Authorization code expired');
+      return null;
+    }
+
+    // Validate client and redirect URI
+    if (authCode.clientId !== clientId || authCode.redirectUri !== redirectUri) {
+      logger.warn({
+        code: code.substring(0, 20) + '...',
+        expectedClient: authCode.clientId,
+        providedClient: clientId
+      }, 'Authorization code validation failed');
+      return null;
+    }
+
+    // Code is valid - consume it (one-time use)
+    this.authorizationCodes.delete(code);
+
+    logger.info({
+      sessionId: authCode.sessionId,
+      clientId
+    }, 'Authorization code validated and consumed');
+
+    return authCode.sessionId;
   }
 
   /**
@@ -491,6 +606,13 @@ export class AuthManager {
    */
   getStats() {
     return this.tokenStore.getStats();
+  }
+
+  /**
+   * Get all sessions (for token lookup)
+   */
+  getAllSessions() {
+    return this.tokenStore.getAllSessions();
   }
 
   /**

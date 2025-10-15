@@ -1,7 +1,7 @@
 {
   "name": "spotimy-mcp",
-  "version": "0.6.0",
-  "description": "ArtistLens - A powerful Spotify Web API integration for accessing music, artists, albums, and recommendations",
+  "version": "0.7.0",
+  "description": "SpotiMy (building on top of ArtistLens) - A powerful Spotify MCP Server integration for accessing your Spotify library",
   "type": "module",
   "bin": {
     "artistlens": "./build/index.js"
