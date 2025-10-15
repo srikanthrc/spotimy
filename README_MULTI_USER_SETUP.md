@@ -272,6 +272,9 @@ docker-compose up -d
 
 Authorize sessions same as above, using the exposed port (default 3001).
 
+### Debugging
+`docker exec -it spotimy-mcp-server sqlite3 /app/data/tokens.db` to inspect DB contents.
+
 ## Troubleshooting
 
 ### Session Not Found

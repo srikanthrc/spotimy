@@ -16,10 +16,10 @@ The MCP server now follows the proper authorization discovery flow:
 ### Authorization Discovery
 
 #### `GET /mcp` (Unauthenticated)
-Returns 401 with discovery headers:
+Returns 401 with discovery headers including required scopes (RFC 6750 Section 3):
 ```http
 HTTP/1.1 401 Unauthorized
-WWW-Authenticate: Bearer realm="http://localhost:3001", resource_metadata="http://localhost:3001/mcp-metadata"
+WWW-Authenticate: Bearer realm="http://localhost:3001", resource_metadata="http://localhost:3001/mcp-metadata", scope="playlist-read-private playlist-read-collaborative user-read-private user-top-read playlist-modify-public playlist-modify-private"
 Content-Type: application/json
 
 {
@@ -50,14 +50,29 @@ Returns resource server metadata:
 }
 ```
 
-#### `GET /.well-known/mcp`
-Well-known endpoint for fallback discovery:
+#### `GET /.well-known/oauth-protected-resource`
+Well-known endpoint for fallback discovery (per MCP spec):
 ```json
 {
   "authorizationServer": "http://localhost:3001/authorize",
   "tokenEndpoint": "http://localhost:3001/token",
   "resourceMetadata": "http://localhost:3001/mcp-metadata",
   "mcpEndpoint": "http://localhost:3001/mcp"
+}
+```
+
+#### `GET /.well-known/oauth-authorization-server`
+OAuth 2.0 Authorization Server Metadata endpoint (RFC 8414):
+```json
+{
+  "issuer": "http://localhost:3001",
+  "authorization_endpoint": "http://localhost:3001/auth",
+  "token_endpoint": "http://localhost:3001/token",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code", "refresh_token"],
+  "code_challenge_methods_supported": ["S256"],
+  "scopes_supported": [...],
+  "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"]
 }
 ```
 
@@ -115,15 +130,25 @@ curl http://localhost:3001/mcp-metadata | jq
 Expected response:
 - Resource server metadata with authorization endpoints
 
-### 3. Test Well-Known Endpoint
+### 3. Test Well-Known Endpoints
+
+#### Protected Resource Metadata
 ```bash
-curl http://localhost:3001/.well-known/mcp | jq
+curl http://localhost:3001/.well-known/oauth-protected-resource | jq
 ```
 
 Expected response:
-- Well-known metadata for fallback discovery
+- Protected resource metadata for MCP fallback discovery
 
-### 4. Test Authorization Server Metadata
+#### Authorization Server Metadata (RFC 8414)
+```bash
+curl http://localhost:3001/.well-known/oauth-authorization-server | jq
+```
+
+Expected response:
+- OAuth 2.0 Authorization Server metadata
+
+### 4. Test Authorization Server Metadata Endpoint
 ```bash
 curl http://localhost:3001/authorize | jq
 ```
@@ -241,8 +266,9 @@ The server validates tokens on:
 
 This implementation follows the MCP Authorization specification:
 - ✅ Returns 401 with `WWW-Authenticate` header containing `resource_metadata`
+- ✅ Includes `scope` parameter in `WWW-Authenticate` header (RFC 6750 Section 3)
 - ✅ Provides resource metadata endpoint
-- ✅ Supports well-known URI fallback
+- ✅ Supports well-known URI fallback (both MCP and OAuth 2.0 formats)
 - ✅ Returns OAuth 2.1 authorization server metadata
 - ✅ Validates tokens on every request
 - ✅ Provides clear error messages with re-authorization endpoints

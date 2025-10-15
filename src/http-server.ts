@@ -46,6 +46,21 @@ import { PlaylistArgs, PlaylistTracksArgs, PlaylistItemsArgs, ModifyPlaylistArgs
 import { SearchArgs as SearchArgsType } from './types/search.js';
 
 class SpotifyHttpServer {
+  // Cache auth status for 5 seconds to reduce DB lookups during rapid reconnection attempts
+  private authStatusCache = new Map<string, { status: any; timestamp: number }>();
+  private readonly AUTH_CACHE_TTL = 5000; // 5 seconds
+
+  // Required OAuth scopes for accessing this MCP server (RFC 6750 Section 3)
+  private readonly REQUIRED_SCOPES_ARRAY = [
+    'playlist-read-private',
+    'playlist-read-collaborative',
+    'user-read-private',
+    'user-top-read',
+    'playlist-modify-public',
+    'playlist-modify-private'
+  ];
+  private readonly REQUIRED_SCOPES = this.REQUIRED_SCOPES_ARRAY.join(' ');
+
   private getFaviconPath(): string {
     // Try to find favicon in multiple locations (dev vs prod)
     const possiblePaths = [
@@ -62,6 +77,20 @@ class SpotifyHttpServer {
     }
 
     throw new Error('Favicon not found in any expected location');
+  }
+
+  private async getCachedAuthStatus(sessionId: string): Promise<any> {
+    const now = Date.now();
+    const cached = this.authStatusCache.get(sessionId);
+    
+    if (cached && (now - cached.timestamp) < this.AUTH_CACHE_TTL) {
+      return cached.status;
+    }
+
+    const status = await this.authManager.getAuthStatus(sessionId);
+    this.authStatusCache.set(sessionId, { status, timestamp: now });
+    
+    return status;
   }
 
   private validateArgs<T>(args: Record<string, unknown> | undefined, requiredFields: string[]): T {
@@ -1089,6 +1118,10 @@ class SpotifyHttpServer {
 
   private setupHttpServer() {
     this.httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+      // Set keep-alive and timeout headers to improve connection stability
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Keep-Alive', 'timeout=30');
+      
       try {
         const url = new URL(req.url!, `http://${req.headers.host}`);
 
@@ -1349,14 +1382,7 @@ class SpotifyHttpServer {
             tokenEndpoint: `${baseUrl}/token`,
             resourceServer: baseUrl,
             mcpEndpoint: `${baseUrl}/mcp`,
-            scopes: [
-              'playlist-read-private',
-              'playlist-read-collaborative',
-              'user-read-private',
-              'user-top-read',
-              'playlist-modify-public',
-              'playlist-modify-private'
-            ]
+            scopes: this.REQUIRED_SCOPES_ARRAY
           };
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1364,14 +1390,35 @@ class SpotifyHttpServer {
           return;
         }
 
-        // Well-known metadata endpoint (fallback discovery)
-        if (url.pathname === '/.well-known/mcp') {
+        // Well-known metadata endpoint (fallback discovery per MCP spec)
+        if (url.pathname === '/.well-known/oauth-protected-resource') {
           const baseUrl = this.getBaseUrl(req);
           const metadata = {
             authorizationServer: `${baseUrl}/authorize`,
             tokenEndpoint: `${baseUrl}/token`,
             resourceMetadata: `${baseUrl}/mcp-metadata`,
             mcpEndpoint: `${baseUrl}/mcp`
+          };
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(metadata, null, 2));
+          return;
+        }
+
+        // OAuth 2.0 Authorization Server Metadata (RFC 8414)
+        if (url.pathname === '/.well-known/oauth-authorization-server') {
+          const baseUrl = this.getBaseUrl(req);
+
+          // OAuth 2.1 / RFC 8414 Authorization Server Metadata
+          const metadata = {
+            issuer: baseUrl,
+            authorization_endpoint: `${baseUrl}/auth`,
+            token_endpoint: `${baseUrl}/token`,
+            response_types_supported: ['code'],
+            grant_types_supported: ['authorization_code', 'refresh_token'],
+            code_challenge_methods_supported: ['S256'],
+            scopes_supported: this.REQUIRED_SCOPES_ARRAY,
+            token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic']
           };
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1392,14 +1439,7 @@ class SpotifyHttpServer {
               response_types_supported: ['code'],
               grant_types_supported: ['authorization_code', 'refresh_token'],
               code_challenge_methods_supported: ['S256'],
-              scopes_supported: [
-                'playlist-read-private',
-                'playlist-read-collaborative',
-                'user-read-private',
-                'user-top-read',
-                'playlist-modify-public',
-                'playlist-modify-private'
-              ],
+              scopes_supported: this.REQUIRED_SCOPES_ARRAY,
               token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic']
             };
 
@@ -1442,11 +1482,11 @@ class SpotifyHttpServer {
             // If no authentication provided, return 401 with discovery headers
             if (!hasValidAuth) {
               const baseUrl = this.getBaseUrl(req);
-              
-              // Return 401 with WWW-Authenticate header containing resource_metadata
+
+              // Return 401 with WWW-Authenticate header containing resource_metadata and scope (RFC 6750 Section 3)
               res.writeHead(401, {
                 'Content-Type': 'application/json',
-                'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata"`
+                'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata", scope="${this.REQUIRED_SCOPES}"`
               });
               res.end(JSON.stringify({
                 error: 'unauthorized',
@@ -1455,20 +1495,20 @@ class SpotifyHttpServer {
                 resource_metadata: `${baseUrl}/mcp-metadata`,
                 documentation: 'https://github.com/modelcontextprotocol/specification'
               }));
-              
+
               logger.info('MCP request rejected: No authentication provided (401 with discovery headers)');
               return;
             }
 
             // Check if session has valid token (if sessionId provided)
             if (clientSessionId) {
-              const authStatus = await this.authManager.getAuthStatus(clientSessionId);
+              const authStatus = await this.getCachedAuthStatus(clientSessionId);
               if (!authStatus.authenticated) {
                 const baseUrl = this.getBaseUrl(req);
-                
+
                 res.writeHead(401, {
                   'Content-Type': 'application/json',
-                  'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata", error="invalid_token"`
+                  'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata", scope="${this.REQUIRED_SCOPES}", error="invalid_token"`
                 });
                 res.end(JSON.stringify({
                   error: 'invalid_token',
@@ -1476,7 +1516,7 @@ class SpotifyHttpServer {
                   authorization_endpoint: `${baseUrl}/auth?sessionId=${clientSessionId}`,
                   session_id: clientSessionId
                 }));
-                
+
                 logger.info({ sessionId: clientSessionId }, 'MCP request rejected: Invalid or expired token');
                 return;
               }
@@ -1503,6 +1543,7 @@ class SpotifyHttpServer {
               if (clientSessionId) {
                 this.transports.delete(clientSessionId);
                 this.sessionIdMapping.delete(transport.sessionId);
+                this.authStatusCache.delete(clientSessionId); // Clear cached auth status
               }
               logger.info({ sessionId: displaySessionId }, 'MCP session disconnected');
             };
@@ -1536,20 +1577,20 @@ class SpotifyHttpServer {
             const sessionId = customSessionId || transportSessionId;
 
             // Verify session still has valid auth for POST requests
-            const authStatus = await this.authManager.getAuthStatus(sessionId);
+            const authStatus = await this.getCachedAuthStatus(sessionId);
             if (!authStatus.authenticated) {
               const baseUrl = this.getBaseUrl(req);
-              
+
               res.writeHead(401, {
                 'Content-Type': 'application/json',
-                'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata", error="invalid_token"`
+                'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata", scope="${this.REQUIRED_SCOPES}", error="invalid_token"`
               });
               res.end(JSON.stringify({
                 error: 'invalid_token',
                 error_description: 'Session token is invalid or expired. Please re-authorize.',
                 authorization_endpoint: `${baseUrl}/auth?sessionId=${sessionId}`
               }));
-              
+
               logger.info({ sessionId }, 'MCP POST request rejected: Invalid or expired token');
               return;
             }
@@ -1582,6 +1623,11 @@ class SpotifyHttpServer {
 
   async listen(port: number = 3000, host: string = '127.0.0.1') {
     return new Promise<void>((resolve, reject) => {
+      // Set server timeouts to prevent connection issues
+      this.httpServer.timeout = 120000; // 2 minutes
+      this.httpServer.keepAliveTimeout = 65000; // 65 seconds (> typical load balancer timeout)
+      this.httpServer.headersTimeout = 66000; // slightly more than keepAliveTimeout
+      
       this.httpServer.listen(port, host, () => {
         logger.info({ host, port }, 'Spotify MCP HTTP server running (Multi-user mode with Authorization Discovery)');
         logger.info('MCP Endpoints:');
@@ -1589,10 +1635,11 @@ class SpotifyHttpServer {
         logger.info('  POST /mcp                      - MCP message endpoint');
         logger.info('');
         logger.info('Authorization Discovery (MCP Spec):');
-        logger.info('  GET  /mcp-metadata             - Resource metadata endpoint');
-        logger.info('  GET  /.well-known/mcp          - Well-known metadata (fallback)');
-        logger.info('  GET  /authorize                - Authorization server metadata');
-        logger.info('  POST /token                    - Token endpoint (not implemented)');
+        logger.info('  GET  /mcp-metadata                           - Resource metadata endpoint');
+        logger.info('  GET  /.well-known/oauth-protected-resource   - Protected resource metadata');
+        logger.info('  GET  /.well-known/oauth-authorization-server - OAuth 2.0 AS metadata (RFC 8414)');
+        logger.info('  GET  /authorize                              - Authorization server metadata');
+        logger.info('  POST /token                                  - Token endpoint (not implemented)');
         logger.info('');
         logger.info('OAuth Flow:');
         logger.info('  GET  /auth?sessionId=<id>      - Start Spotify OAuth for session');

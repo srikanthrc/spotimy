@@ -93,7 +93,7 @@ The server implements the full MCP Authorization Server Discovery flow:
 1. **Unauthenticated Request**: Client attempts to connect to `/mcp` without credentials
 2. **401 Response**: Server returns HTTP 401 with `WWW-Authenticate` header containing `resource_metadata` URL
 3. **Metadata Discovery**: Client fetches `/mcp-metadata` to discover authorization endpoints
-4. **Well-Known Fallback**: Client can also probe `/.well-known/mcp` for metadata
+4. **Well-Known Fallback**: Client can also probe `/.well-known/oauth-protected-resource` for metadata
 5. **Authorization Server Metadata**: Client fetches `/authorize` to get OAuth 2.1 metadata
 6. **OAuth Flow**: User authorizes via Spotify OAuth
 7. **Authenticated Connection**: Client connects with valid session token
