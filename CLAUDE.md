@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Spotify MCP Server** - A Model Context Protocol (MCP) server providing access to Spotify Web API. This is a fork of the original [ArtistLens](https://github.com/superseoworld/artistlens) with enhanced HTTP transport, OAuth integration, and modern logging.
 
-**Key Enhancement:** Integrated OAuth flow with HTTP transport eliminates the need for separate callback servers.
+**Key Enhancements:** 
+- Integrated OAuth flow with HTTP transport eliminates the need for separate callback servers
+- Full MCP Authorization Server Discovery implementation (MCP spec 2.3.2 & 2.3.4)
 
 ## Commands
 
@@ -84,13 +86,27 @@ docker-compose logs -f spotimy-mcp # View logs
 - Controlled by `NODE_ENV` and `LOG_LEVEL` variables
 - Outputs to stderr for proper separation
 
+### MCP Authorization Discovery Flow (HTTP Transport)
+
+The server implements the full MCP Authorization Server Discovery flow:
+
+1. **Unauthenticated Request**: Client attempts to connect to `/mcp` without credentials
+2. **401 Response**: Server returns HTTP 401 with `WWW-Authenticate` header containing `resource_metadata` URL
+3. **Metadata Discovery**: Client fetches `/mcp-metadata` to discover authorization endpoints
+4. **Well-Known Fallback**: Client can also probe `/.well-known/mcp` for metadata
+5. **Authorization Server Metadata**: Client fetches `/authorize` to get OAuth 2.1 metadata
+6. **OAuth Flow**: User authorizes via Spotify OAuth
+7. **Authenticated Connection**: Client connects with valid session token
+
+See [README_MCP_AUTH_DISCOVERY.md](README_MCP_AUTH_DISCOVERY.md) for detailed documentation.
+
 ### OAuth Flow (HTTP Transport Only)
 
-1. User visits `/auth` → HTML page with "Authorize" button
+1. User visits `/auth?sessionId=<id>` → HTML page with "Authorize" button
 2. Redirects to Spotify with PKCE challenge
 3. Spotify redirects to `/callback?code=...`
 4. Server exchanges code for tokens via `AuthManager.exchangeCodeForTokens()`
-5. Tokens saved to `.env` and process.env (no restart needed)
+5. Tokens saved to SQLite database (per-session)
 6. `/health` endpoint validates token in real-time
 
 ### Configuration

@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
+import packageJson from '../package.json' assert { type: 'json' };
 
 import { AuthManager } from './utils/auth.js';
 import { SpotifyApi } from './utils/api.js';
@@ -74,8 +75,8 @@ class SpotifyServer {
   constructor() {
     this.server = new Server(
       {
-        name: 'artistlens',
-        version: '0.4.12',
+        name: packageJson.name,
+        version: packageJson.version,
       },
       {
         capabilities: {

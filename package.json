@@ -1,6 +1,6 @@
 {
-  "name": "@thomaswawra/artistlens",
-  "version": "0.4.12",
+  "name": "spotimy-mcp",
+  "version": "0.6.0",
   "description": "ArtistLens - A powerful Spotify Web API integration for accessing music, artists, albums, and recommendations",
   "type": "module",
   "bin": {

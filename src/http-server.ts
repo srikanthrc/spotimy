@@ -11,6 +11,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
+import packageJson from '../package.json' assert { type: 'json' };
 
 import { AuthManager } from './utils/auth.js';
 import { SpotifyApi } from './utils/api.js';
@@ -153,8 +154,8 @@ class SpotifyHttpServer {
   constructor() {
     this.server = new Server(
       {
-        name: 'spotify-mcp',
-        version: '0.5.0',
+        name: packageJson.name,
+        version: packageJson.version,
       },
       {
         capabilities: {
@@ -185,6 +186,27 @@ class SpotifyHttpServer {
 
   private getCurrentSessionId(): string | undefined {
     return this.currentSessionId;
+  }
+
+  private getBaseUrl(req: IncomingMessage): string {
+    // Check for ngrok domain first
+    const ngrokDomain = process.env.NGROK_DOMAIN;
+    if (ngrokDomain) {
+      return `https://${ngrokDomain}`;
+    }
+
+    // Use forwarded host if behind proxy
+    const forwardedHost = req.headers['x-forwarded-host'];
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    if (forwardedHost) {
+      const proto = forwardedProto || 'http';
+      return `${proto}://${forwardedHost}`;
+    }
+
+    // Fallback to configured host and port
+    const host = process.env.HTTP_HOST || '127.0.0.1';
+    const port = process.env.HTTP_PORT || '3001';
+    return `http://${host}:${port}`;
   }
 
   private setupToolHandlers() {
@@ -1094,6 +1116,8 @@ class SpotifyHttpServer {
 
             const healthData = {
               status: 'ok',
+              name: packageJson.name,
+              version: packageJson.version,
               message: 'Spotify MCP Server is running (Multi-user mode)',
               timestamp: new Date().toISOString(),
               auth: authStatus,
@@ -1317,13 +1341,148 @@ class SpotifyHttpServer {
           return;
         }
 
-        // MCP endpoint
+        // Resource metadata endpoint (MCP Authorization Discovery)
+        if (url.pathname === '/mcp-metadata') {
+          const baseUrl = this.getBaseUrl(req);
+          const metadata = {
+            authorizationEndpoint: `${baseUrl}/authorize`,
+            tokenEndpoint: `${baseUrl}/token`,
+            resourceServer: baseUrl,
+            mcpEndpoint: `${baseUrl}/mcp`,
+            scopes: [
+              'playlist-read-private',
+              'playlist-read-collaborative',
+              'user-read-private',
+              'user-top-read',
+              'playlist-modify-public',
+              'playlist-modify-private'
+            ]
+          };
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(metadata, null, 2));
+          return;
+        }
+
+        // Well-known metadata endpoint (fallback discovery)
+        if (url.pathname === '/.well-known/mcp') {
+          const baseUrl = this.getBaseUrl(req);
+          const metadata = {
+            authorizationServer: `${baseUrl}/authorize`,
+            tokenEndpoint: `${baseUrl}/token`,
+            resourceMetadata: `${baseUrl}/mcp-metadata`,
+            mcpEndpoint: `${baseUrl}/mcp`
+          };
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(metadata, null, 2));
+          return;
+        }
+
+        // Authorization server metadata endpoint
+        if (url.pathname === '/authorize') {
+          if (req.method === 'GET') {
+            const baseUrl = this.getBaseUrl(req);
+            
+            // OAuth 2.1 / OpenID Connect Discovery metadata
+            const metadata = {
+              issuer: baseUrl,
+              authorization_endpoint: `${baseUrl}/auth`,
+              token_endpoint: `${baseUrl}/token`,
+              response_types_supported: ['code'],
+              grant_types_supported: ['authorization_code', 'refresh_token'],
+              code_challenge_methods_supported: ['S256'],
+              scopes_supported: [
+                'playlist-read-private',
+                'playlist-read-collaborative',
+                'user-read-private',
+                'user-top-read',
+                'playlist-modify-public',
+                'playlist-modify-private'
+              ],
+              token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic']
+            };
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(metadata, null, 2));
+          } else {
+            res.writeHead(405, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
+          }
+          return;
+        }
+
+        // Token endpoint (for OAuth token exchange)
+        if (url.pathname === '/token') {
+          if (req.method === 'POST') {
+            // This endpoint would handle token exchange
+            // For now, redirect to the actual Spotify OAuth flow
+            res.writeHead(501, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+              error: 'not_implemented',
+              error_description: 'Token exchange happens via Spotify OAuth callback. Use /auth?sessionId=<id> to initiate the flow.'
+            }));
+          } else {
+            res.writeHead(405, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }));
+          }
+          return;
+        }
+
+        // MCP endpoint with Authorization Discovery
         if (url.pathname === '/mcp') {
           if (req.method === 'GET') {
             // Check if client provided a sessionId
             const clientSessionId = url.searchParams.get('sessionId');
+            
+            // Check for Authorization header
+            const authHeader = req.headers['authorization'];
+            const hasValidAuth = clientSessionId || authHeader;
 
-            // Initialize SSE connection
+            // If no authentication provided, return 401 with discovery headers
+            if (!hasValidAuth) {
+              const baseUrl = this.getBaseUrl(req);
+              
+              // Return 401 with WWW-Authenticate header containing resource_metadata
+              res.writeHead(401, {
+                'Content-Type': 'application/json',
+                'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata"`
+              });
+              res.end(JSON.stringify({
+                error: 'unauthorized',
+                error_description: 'Authentication required. Please obtain authorization.',
+                authorization_endpoint: `${baseUrl}/auth`,
+                resource_metadata: `${baseUrl}/mcp-metadata`,
+                documentation: 'https://github.com/modelcontextprotocol/specification'
+              }));
+              
+              logger.info('MCP request rejected: No authentication provided (401 with discovery headers)');
+              return;
+            }
+
+            // Check if session has valid token (if sessionId provided)
+            if (clientSessionId) {
+              const authStatus = await this.authManager.getAuthStatus(clientSessionId);
+              if (!authStatus.authenticated) {
+                const baseUrl = this.getBaseUrl(req);
+                
+                res.writeHead(401, {
+                  'Content-Type': 'application/json',
+                  'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata", error="invalid_token"`
+                });
+                res.end(JSON.stringify({
+                  error: 'invalid_token',
+                  error_description: 'Session token is invalid or expired. Please re-authorize.',
+                  authorization_endpoint: `${baseUrl}/auth?sessionId=${clientSessionId}`,
+                  session_id: clientSessionId
+                }));
+                
+                logger.info({ sessionId: clientSessionId }, 'MCP request rejected: Invalid or expired token');
+                return;
+              }
+            }
+
+            // Initialize SSE connection (authenticated)
             const transport = new SSEServerTransport('/mcp', res);
 
             // Always store transport by its auto-generated sessionId (for POST handling)
@@ -1336,7 +1495,7 @@ class SpotifyHttpServer {
             }
 
             const displaySessionId = clientSessionId || transport.sessionId;
-            logger.info({ sessionId: displaySessionId, transportSessionId: transport.sessionId, isCustomSession: !!clientSessionId }, 'New MCP session connected');
+            logger.info({ sessionId: displaySessionId, transportSessionId: transport.sessionId, isCustomSession: !!clientSessionId }, 'New MCP session connected (authenticated)');
 
             // Set up transport event handlers
             transport.onclose = () => {
@@ -1376,6 +1535,25 @@ class SpotifyHttpServer {
             const customSessionId = this.sessionIdMapping.get(transportSessionId);
             const sessionId = customSessionId || transportSessionId;
 
+            // Verify session still has valid auth for POST requests
+            const authStatus = await this.authManager.getAuthStatus(sessionId);
+            if (!authStatus.authenticated) {
+              const baseUrl = this.getBaseUrl(req);
+              
+              res.writeHead(401, {
+                'Content-Type': 'application/json',
+                'WWW-Authenticate': `Bearer realm="${baseUrl}", resource_metadata="${baseUrl}/mcp-metadata", error="invalid_token"`
+              });
+              res.end(JSON.stringify({
+                error: 'invalid_token',
+                error_description: 'Session token is invalid or expired. Please re-authorize.',
+                authorization_endpoint: `${baseUrl}/auth?sessionId=${sessionId}`
+              }));
+              
+              logger.info({ sessionId }, 'MCP POST request rejected: Invalid or expired token');
+              return;
+            }
+
             // Set current session ID for this request (use custom ID if available)
             this.currentSessionId = sessionId;
 
@@ -1405,14 +1583,24 @@ class SpotifyHttpServer {
   async listen(port: number = 3000, host: string = '127.0.0.1') {
     return new Promise<void>((resolve, reject) => {
       this.httpServer.listen(port, host, () => {
-        logger.info({ host, port }, 'Spotify MCP HTTP server running (Multi-user mode)');
-        logger.info('Endpoints available:');
-        logger.info('  GET  /mcp                      - MCP SSE connection');
+        logger.info({ host, port }, 'Spotify MCP HTTP server running (Multi-user mode with Authorization Discovery)');
+        logger.info('MCP Endpoints:');
+        logger.info('  GET  /mcp                      - MCP SSE connection (requires auth)');
         logger.info('  POST /mcp                      - MCP message endpoint');
-        logger.info('  GET  /health?sessionId=<id>    - Health check (session-specific)');
+        logger.info('');
+        logger.info('Authorization Discovery (MCP Spec):');
+        logger.info('  GET  /mcp-metadata             - Resource metadata endpoint');
+        logger.info('  GET  /.well-known/mcp          - Well-known metadata (fallback)');
+        logger.info('  GET  /authorize                - Authorization server metadata');
+        logger.info('  POST /token                    - Token endpoint (not implemented)');
+        logger.info('');
+        logger.info('OAuth Flow:');
         logger.info('  GET  /auth?sessionId=<id>      - Start Spotify OAuth for session');
         logger.info('  GET  /callback                 - Spotify OAuth callback');
         logger.info('  POST /revoke?sessionId=<id>    - Revoke session authorization');
+        logger.info('');
+        logger.info('Utility:');
+        logger.info('  GET  /health?sessionId=<id>    - Health check (session-specific)');
         logger.info('  GET  /favicon.ico              - Favicon image');
         resolve();
       });
