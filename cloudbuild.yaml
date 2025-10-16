@@ -1,0 +1,54 @@
+steps:
+  # Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/spotimy-mcp:latest'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/spotimy-mcp:$SHORT_SHA'
+      - '.'
+    timeout: 600s
+
+  # Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/spotimy-mcp:latest']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/spotimy-mcp:$SHORT_SHA']
+
+  # Update GCE instance with new container
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'compute'
+      - 'instances'
+      - 'update-container'
+      - 'spotimy-mcp'
+      - '--zone=${_ZONE}'
+      - '--container-image=gcr.io/$PROJECT_ID/spotimy-mcp:latest'
+    timeout: 300s
+
+  # Restart the instance to apply changes
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'compute'
+      - 'instances'
+      - 'reset'
+      - 'spotimy-mcp'
+      - '--zone=${_ZONE}'
+    timeout: 300s
+
+# Store images in Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/spotimy-mcp:latest'
+  - 'gcr.io/$PROJECT_ID/spotimy-mcp:$SHORT_SHA'
+
+# Substitution variables with defaults
+substitutions:
+  _ZONE: 'us-central1-a'
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s
