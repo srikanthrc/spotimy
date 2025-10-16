@@ -14,6 +14,7 @@ echo "Project ID: $PROJECT_ID"
 # Pull environment variables from instance metadata
 SPOTIFY_CLIENT_ID=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/SPOTIFY_CLIENT_ID 2>/dev/null || echo "")
 SPOTIFY_CLIENT_SECRET=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/SPOTIFY_CLIENT_SECRET 2>/dev/null || echo "")
+SPOTIFY_REDIRECT_URI=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/SPOTIFY_REDIRECT_URI 2>/dev/null || echo "")
 NGROK_AUTH_TOKEN=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/NGROK_AUTH_TOKEN 2>/dev/null || echo "")
 NGROK_DOMAIN=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/NGROK_DOMAIN 2>/dev/null || echo "")
 
@@ -53,6 +54,7 @@ docker run -d \
   -e HTTP_PORT=3001 \
   -e SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID}" \
   -e SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET}" \
+  -e SPOTIFY_REDIRECT_URI="${SPOTIFY_REDIRECT_URI}" \
   -e NGROK_AUTH_TOKEN="${NGROK_AUTH_TOKEN}" \
   -e NGROK_DOMAIN="${NGROK_DOMAIN}" \
   -e TOKEN_STORE_PATH=/app/data \
