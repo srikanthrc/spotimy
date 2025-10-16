@@ -21,10 +21,22 @@ NGROK_DOMAIN=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal
 mkdir -p /var/lib/spotimy/data
 chmod 755 /var/lib/spotimy
 
+# Configure Docker to authenticate with GCR using the instance service account
+echo "Configuring Docker authentication for GCR..."
+docker-credential-gcr configure-docker --registries=gcr.io 2>/dev/null || true
+
+# Alternative: Use gcloud to configure docker (works on Container-Optimized OS)
+/usr/bin/docker-credential-gcr configure-docker 2>/dev/null || true
+
 # Pull and run the latest container
-# Note: Container-Optimized OS automatically configures docker for GCR
 echo "Pulling latest container image..."
-docker pull gcr.io/${PROJECT_ID}/spotimy-mcp:latest
+docker pull gcr.io/${PROJECT_ID}/spotimy-mcp:latest || {
+    echo "Failed to pull image. Checking authentication..."
+    # Try using metadata server token
+    TOKEN=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | cut -d'"' -f4)
+    echo $TOKEN | docker login -u oauth2accesstoken --password-stdin https://gcr.io
+    docker pull gcr.io/${PROJECT_ID}/spotimy-mcp:latest
+}
 
 # Stop existing container if running
 docker stop spotimy-mcp 2>/dev/null || true
