@@ -47,25 +47,55 @@ Spotimy MCP Server + Ngrok Tunnel
 4. **Spotify API Credentials**
    - Client ID
    - Client Secret
-   - Redirect URI configured: `http://127.0.0.1:3001/callback`
+   - **IMPORTANT**: Redirect URI must include your ngrok domain: `https://YOUR_DOMAIN.ngrok.dev/callback`
+   - Configure at: https://developer.spotify.com/dashboard/applications
 
 5. **Ngrok Account**
    - Auth token
    - Custom domain (e.g., `splay.ngrok.dev`)
 
+6. **GitHub Connection to Cloud Build**
+   - You'll need to connect your GitHub account to Cloud Build
+   - This is done via the web console (see step 3 below)
+
 ## Deployment Steps
 
-### 1. Configure Environment Variables
+### 1. Update Spotify App Redirect URI
+
+**CRITICAL FIRST STEP**: Before deploying, add your ngrok domain to Spotify:
+
+1. Go to: https://developer.spotify.com/dashboard/applications
+2. Select your app
+3. Click **"Edit Settings"**
+4. Under **"Redirect URIs"**, add:
+   ```
+   https://YOUR_DOMAIN.ngrok.dev/callback
+   ```
+   (Replace `YOUR_DOMAIN` with your actual ngrok domain, e.g., `splay.ngrok.dev`)
+5. Click **"Save"**
+
+### 2. Configure GCP Project
 
 Edit [gce-deploy.sh](gce-deploy.sh) and update these variables:
 
 ```bash
-PROJECT_ID="your-gcp-project-id"      # Your GCP project ID
-ZONE="us-central1-a"                   # GCP zone
-REGION="us-central1"                   # GCP region
+PROJECT_ID="your-gcp-project-id"      # Your GCP project ID (e.g., modern-bond-473904-e6)
+ZONE="us-west1-a"                      # GCP zone
+REGION="us-west1"                      # GCP region
 ```
 
-### 2. Run Deployment Script
+### 3. Connect GitHub to Cloud Build
+
+Before running the deployment script, connect your GitHub repository:
+
+1. Go to: https://console.cloud.google.com/cloud-build/triggers/connect?project=YOUR_PROJECT_ID
+2. Click **"Connect Repository"**
+3. Select **"GitHub (Cloud Build GitHub App)"**
+4. Authenticate with GitHub
+5. Select repository: `srikanthrc/spotimy`
+6. Click **"Connect"**
+
+### 4. Run Deployment Script
 
 ```bash
 # Make script executable (already done)
@@ -76,12 +106,14 @@ chmod +x gce-deploy.sh
 ```
 
 The script will prompt you for:
-- Spotify Client ID
-- Spotify Client Secret
-- Ngrok Auth Token
-- Ngrok Domain
+- **Spotify Client ID**: From your Spotify app dashboard
+- **Spotify Client Secret**: From your Spotify app dashboard
+- **Ngrok Auth Token**: From your ngrok dashboard
+- **Ngrok Domain**: Your custom ngrok domain (e.g., `splay.ngrok.dev`)
 
-### 3. What the Script Does
+The script automatically sets `SPOTIFY_REDIRECT_URI` based on your ngrok domain.
+
+### 5. What the Script Does
 
 1. **Enables GCP APIs**
    - Compute Engine API
@@ -103,26 +135,27 @@ The script will prompt you for:
    - 10GB boot disk
    - Auto-restart on failure
 
-5. **Sets Up Cloud Build Trigger**
+5. **Creates Cloud Build Trigger**
    - Auto-deploys on push to `pnsive/sse-oauth` branch
    - Rebuilds image and updates instance
+   - **Note**: If trigger creation fails, create it manually via console (see troubleshooting)
 
-### 4. Verify Deployment
+### 6. Verify Deployment
 
 ```bash
 # Check instance status
 gcloud compute instances list
 
-# Get instance IP
+# Get instance IP (update zone if different)
 gcloud compute instances describe spotimy-mcp \
-  --zone=us-central1-a \
+  --zone=us-west1-a \
   --format='get(networkInterfaces[0].accessConfigs[0].natIP)'
 
-# View logs
-gcloud compute ssh spotimy-mcp --zone=us-central1-a -- docker logs -f spotimy-mcp
+# View logs (note: container name may be different)
+gcloud compute ssh spotimy-mcp --zone=us-west1-a --command="docker ps --format '{{.Names}}' | head -1 | xargs docker logs -f"
 
 # Check health
-curl https://splay.ngrok.dev/health
+curl https://YOUR_DOMAIN.ngrok.dev/health
 ```
 
 ## CI/CD Workflow
@@ -300,11 +333,66 @@ gcloud compute firewall-rules list --filter="name:spotimy"
 
 # Verify instance tags
 gcloud compute instances describe spotimy-mcp \
-  --zone=us-central1-a \
+  --zone=us-west1-a \
   --format='get(tags.items)'
 
 # Test connectivity
 curl -v http://<EXTERNAL_IP>:3001/health
+```
+
+### INVALID_CLIENT Error (Spotify OAuth)
+
+If you get `INVALID_CLIENT` errors when testing OAuth:
+
+1. **Check Spotify Redirect URI**:
+   ```bash
+   # Verify SPOTIFY_REDIRECT_URI is set in container
+   gcloud compute ssh spotimy-mcp --zone=us-west1-a --command="docker ps --format '{{.Names}}' | head -1 | xargs -I {} docker exec {} env | grep SPOTIFY_REDIRECT_URI"
+   ```
+   Should show: `SPOTIFY_REDIRECT_URI=https://YOUR_DOMAIN.ngrok.dev/callback`
+
+2. **Update Spotify App Settings**:
+   - Go to: https://developer.spotify.com/dashboard/applications
+   - Select your app
+   - Edit Settings → Redirect URIs
+   - Add: `https://YOUR_DOMAIN.ngrok.dev/callback`
+   - Click Save
+
+3. **Update Container Environment**:
+   ```bash
+   # If SPOTIFY_REDIRECT_URI is missing, update the container
+   gcloud compute instances update-container spotimy-mcp \
+     --zone=us-west1-a \
+     --container-env=HTTP_HOST=0.0.0.0,HTTP_PORT=3001,SPOTIFY_CLIENT_ID=YOUR_CLIENT_ID,SPOTIFY_CLIENT_SECRET=YOUR_CLIENT_SECRET,SPOTIFY_REDIRECT_URI=https://YOUR_DOMAIN.ngrok.dev/callback,NGROK_AUTH_TOKEN=YOUR_TOKEN,NGROK_DOMAIN=YOUR_DOMAIN.ngrok.dev,TOKEN_STORE_PATH=/app/data
+   ```
+
+### Cloud Build Trigger Creation Fails
+
+If the gcloud command fails with `INVALID_ARGUMENT`:
+
+1. **Connect GitHub via Console**:
+   - Go to: https://console.cloud.google.com/cloud-build/triggers/connect?project=YOUR_PROJECT_ID
+   - Follow the GitHub authentication flow
+
+2. **Create Trigger Manually**:
+   - Name: `spotimy-mcp-deploy`
+   - Event: Push to a branch
+   - Branch: `^pnsive/sse-oauth$`
+   - Configuration: Cloud Build configuration file
+   - Location: `/cloudbuild.yaml`
+   - Substitution variables: `_ZONE` = `us-west1-a`
+
+### Docker Image Pull Authentication Errors
+
+If you see "Unauthenticated request" errors:
+
+```bash
+# The startup script handles this, but if issues persist:
+gcloud compute ssh spotimy-mcp --zone=us-west1-a
+
+# On the instance:
+docker-credential-gcr configure-docker
+docker pull gcr.io/YOUR_PROJECT_ID/spotimy-mcp:latest
 ```
 
 ## Cleanup
