@@ -39,6 +39,13 @@ read -p "Ngrok Auth Token: " NGROK_AUTH_TOKEN
 read -p "Ngrok Domain (e.g., splay.ngrok.dev): " NGROK_DOMAIN
 echo ""
 
+# Automatically set SPOTIFY_REDIRECT_URI based on ngrok domain
+SPOTIFY_REDIRECT_URI="https://${NGROK_DOMAIN}/callback"
+echo -e "${GREEN}Using Spotify Redirect URI: ${SPOTIFY_REDIRECT_URI}${NC}"
+echo -e "${YELLOW}⚠️  Make sure this URI is added in your Spotify App settings at:${NC}"
+echo -e "${YELLOW}   https://developer.spotify.com/dashboard/applications${NC}"
+echo ""
+
 # Set project
 echo -e "${YELLOW}Setting GCP project to: ${PROJECT_ID}${NC}"
 gcloud config set project ${PROJECT_ID}
@@ -85,6 +92,7 @@ gcloud compute instances create ${INSTANCE_NAME} \
   --tags=spotimy-server,http-server \
   --metadata=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID}",\
 SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET}",\
+SPOTIFY_REDIRECT_URI="${SPOTIFY_REDIRECT_URI}",\
 NGROK_AUTH_TOKEN="${NGROK_AUTH_TOKEN}",\
 NGROK_DOMAIN="${NGROK_DOMAIN}",\
 gce-container-declaration="spec:
