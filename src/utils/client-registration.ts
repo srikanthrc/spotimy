@@ -133,8 +133,15 @@ export class ClientRegistrationManager {
 
     const row = stmt.get(clientId) as any;
     if (!row) {
+      logger.debug({ clientId }, 'Client lookup returned no results');
       return null;
     }
+
+    logger.debug({
+      clientId,
+      found: true,
+      clientName: row.client_name
+    }, 'Client found in database');
 
     return {
       client_id: row.client_id,
@@ -156,10 +163,23 @@ export class ClientRegistrationManager {
   validateClient(clientId: string, clientSecret: string): boolean {
     const client = this.getClient(clientId);
     if (!client) {
+      logger.warn({ clientId }, 'Client not found during validation');
       return false;
     }
 
-    return client.client_secret === clientSecret;
+    const isValid = client.client_secret === clientSecret;
+    if (!isValid) {
+      logger.warn({
+        clientId,
+        providedSecretLength: clientSecret.length,
+        storedSecretLength: client.client_secret.length,
+        secretsMatch: client.client_secret === clientSecret
+      }, 'Client secret validation failed');
+    } else {
+      logger.info({ clientId }, 'Client credentials validated successfully');
+    }
+
+    return isValid;
   }
 
   /**

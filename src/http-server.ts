@@ -14,6 +14,7 @@ import {
 import packageJson from '../package.json' assert { type: 'json' };
 
 import logger from './utils/logger.js';
+import { outputSchemas, stripToSchema } from './schemas.js';
 import { AuthManager } from './utils/auth.js';
 import { SpotifyApi } from './utils/api.js';
 import { ClientRegistrationManager } from './utils/client-registration.js';
@@ -196,7 +197,9 @@ class SpotifyHttpServer {
     );
 
     this.authManager = new AuthManager();
-    this.clientRegistrationManager = new ClientRegistrationManager();
+    // Use the same data directory as AuthManager for consistency
+    const dataDir = process.env.TOKEN_STORE_PATH || './data';
+    this.clientRegistrationManager = new ClientRegistrationManager(path.join(dataDir, 'clients.db'));
     this.api = new SpotifyApi(this.authManager);
     this.searchHandler = new SearchHandler(this.api);
     this.artistsHandler = new ArtistsHandler(this.api);
@@ -242,8 +245,8 @@ class SpotifyHttpServer {
   }
 
   private setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const toolsWithOutputSchema = [
         {
           name: 'get_session_info',
           description: 'Get current session ID and authentication status. Use this to find your session ID for authorization.',
@@ -252,6 +255,7 @@ class SpotifyHttpServer {
             properties: {},
             required: []
           },
+          outputSchema: outputSchemas.get_session_info
         },
         {
           name: 'get_access_token',
@@ -261,6 +265,7 @@ class SpotifyHttpServer {
             properties: {},
             required: []
           },
+          outputSchema: outputSchemas.get_access_token
         },
         {
           name: 'search',
@@ -274,7 +279,7 @@ class SpotifyHttpServer {
               },
               type: {
                 type: 'string',
-                description: 'Type of item to search for',
+                description: 'Type of item to search for: track, album, artist, or playlist',
                 enum: ['track', 'album', 'artist', 'playlist']
               },
               limit: {
@@ -287,6 +292,7 @@ class SpotifyHttpServer {
             },
             required: ['query', 'type']
           },
+          outputSchema: outputSchemas.search
         },
         {
           name: 'get_artist',
@@ -301,6 +307,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_artist
         },
         {
           name: 'get_multiple_artists',
@@ -317,6 +324,7 @@ class SpotifyHttpServer {
             },
             required: ['ids']
           },
+          outputSchema: outputSchemas.get_multiple_artists
         },
         {
           name: 'get_artist_top_tracks',
@@ -335,6 +343,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_artist_top_tracks
         },
         {
           name: 'get_artist_related_artists',
@@ -349,6 +358,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_artist_related_artists
         },
         {
           name: 'get_artist_albums',
@@ -366,7 +376,7 @@ class SpotifyHttpServer {
                   type: 'string',
                   enum: ['album', 'single', 'appears_on', 'compilation']
                 },
-                description: 'Optional. Filter by album types'
+                description: 'Optional. Filter by album types: album, single, appears_on, compilation'
               },
               limit: {
                 type: 'number',
@@ -384,6 +394,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_artist_albums
         },
         {
           name: 'get_album',
@@ -398,6 +409,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_album
         },
         {
           name: 'get_album_tracks',
@@ -425,6 +437,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_album_tracks
         },
         {
           name: 'get_multiple_albums',
@@ -441,6 +454,7 @@ class SpotifyHttpServer {
             },
             required: ['ids']
           },
+          outputSchema: outputSchemas.get_multiple_albums
         },
         {
           name: 'get_track',
@@ -455,6 +469,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_track
         },
         {
           name: 'get_available_genres',
@@ -464,6 +479,7 @@ class SpotifyHttpServer {
             properties: {},
             required: []
           },
+          outputSchema: outputSchemas.get_available_genres
         },
         {
           name: 'get_new_releases',
@@ -490,6 +506,7 @@ class SpotifyHttpServer {
               }
             }
           },
+          outputSchema: outputSchemas.get_new_releases
         },
         {
           name: 'get_recommendations',
@@ -522,6 +539,7 @@ class SpotifyHttpServer {
             },
             required: []
           },
+          outputSchema: outputSchemas.get_recommendations
         },
         {
           name: 'get_user_top_tracks',
@@ -551,6 +569,7 @@ class SpotifyHttpServer {
             },
             required: []
           },
+          outputSchema: outputSchemas.get_user_top_tracks
         },
         {
           name: 'get_audiobook',
@@ -569,6 +588,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_audiobook
         },
         {
           name: 'get_multiple_audiobooks',
@@ -589,6 +609,7 @@ class SpotifyHttpServer {
             },
             required: ['ids']
           },
+          outputSchema: outputSchemas.get_multiple_audiobooks
         },
         {
           name: 'get_audiobook_chapters',
@@ -618,6 +639,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_audiobook_chapters
         },
         {
           name: 'get_playlist',
@@ -636,6 +658,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_playlist
         },
         {
           name: 'get_playlist_tracks',
@@ -669,6 +692,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_playlist_tracks
         },
         {
           name: 'get_playlist_items',
@@ -702,6 +726,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.get_playlist_items
         },
         {
           name: 'modify_playlist',
@@ -732,6 +757,7 @@ class SpotifyHttpServer {
             },
             required: ['id']
           },
+          outputSchema: outputSchemas.modify_playlist
         },
         {
           name: 'add_tracks_to_playlist',
@@ -756,6 +782,7 @@ class SpotifyHttpServer {
             },
             required: ['id', 'uris']
           },
+          outputSchema: outputSchemas.add_tracks_to_playlist
         },
         {
           name: 'remove_tracks_from_playlist',
@@ -795,6 +822,7 @@ class SpotifyHttpServer {
             },
             required: ['id', 'tracks']
           },
+          outputSchema: outputSchemas.remove_tracks_from_playlist
         },
         {
           name: 'get_current_user_playlists',
@@ -815,6 +843,7 @@ class SpotifyHttpServer {
               }
             }
           },
+          outputSchema: outputSchemas.get_current_user_playlists
         },
         {
           name: 'get_featured_playlists',
@@ -839,6 +868,7 @@ class SpotifyHttpServer {
               }
             }
           },
+          outputSchema: outputSchemas.get_featured_playlists
         },
         {
           name: 'get_category_playlists',
@@ -864,9 +894,27 @@ class SpotifyHttpServer {
             },
             required: ['category_id']
           },
+          outputSchema: outputSchemas.get_category_playlists
         }
-      ],
-    }));
+      ] as any; // Type assertion to preserve outputSchema fields
+      return {
+        tools: toolsWithOutputSchema
+      };
+    });
+
+    // Helper function to format tool responses with structuredContent (MCP 2024-11-05+)
+    // Uses stripToSchema from schemas.ts to ensure responses match schema exactly
+    const formatToolResponse = (result: unknown, toolName: string): {
+      content: Array<{ type: string; text: string }>;
+      structuredContent?: unknown;
+    } => {
+      const schema = outputSchemas[toolName];
+      const stripped = schema ? stripToSchema(result, schema) : result;
+      return {
+        content: [{ type: 'text', text: JSON.stringify(stripped, null, 2) }],
+        structuredContent: stripped
+      };
+    };
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
@@ -882,223 +930,167 @@ class SpotifyHttpServer {
               authUrl: sessionId ? `${process.env.NGROK_DOMAIN ? 'https://' + process.env.NGROK_DOMAIN : 'http://localhost:' + (process.env.HTTP_PORT || '3001')}/auth?sessionId=${sessionId}` : 'Connect first to get session ID',
               ...authStatus
             };
-            return {
-              content: [{ type: 'text', text: JSON.stringify(info, null, 2) }],
-            };
+            return formatToolResponse(info, 'get_session_info');
           }
 
           case 'get_access_token': {
             const token = await this.authManager.getAccessToken(sessionId);
-            return {
-              content: [{ type: 'text', text: token }],
-            };
+            return formatToolResponse({ token }, 'get_access_token');
           }
 
           case 'search': {
             const args = this.validateArgs<SearchArgsType>(request.params.arguments, ['query', 'type']);
             const result = await this.searchHandler.search(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'search');
           }
 
           case 'get_artist': {
             const args = this.validateArgs<ArtistArgs>(request.params.arguments, ['id']);
             const result = await this.artistsHandler.getArtist(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_artist');
           }
 
           case 'get_multiple_artists': {
             const args = this.validateArgs<MultipleArtistsArgs>(request.params.arguments, ['ids']);
             const result = await this.artistsHandler.getMultipleArtists(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_multiple_artists');
           }
 
           case 'get_artist_top_tracks': {
             const args = this.validateArgs<ArtistTopTracksArgs>(request.params.arguments, ['id']);
             const result = await this.artistsHandler.getArtistTopTracks(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_artist_top_tracks');
           }
 
           case 'get_artist_related_artists': {
             const args = this.validateArgs<ArtistRelatedArtistsArgs>(request.params.arguments, ['id']);
             const result = await this.artistsHandler.getArtistRelatedArtists(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_artist_related_artists');
           }
 
           case 'get_artist_albums': {
             const args = this.validateArgs<ArtistAlbumsArgs>(request.params.arguments, ['id']);
             const result = await this.artistsHandler.getArtistAlbums(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_artist_albums');
           }
 
           case 'get_album': {
             const args = this.validateArgs<AlbumArgs>(request.params.arguments, ['id']);
             const result = await this.albumsHandler.getAlbum(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_album');
           }
 
           case 'get_album_tracks': {
             const args = this.validateArgs<AlbumTracksArgs>(request.params.arguments, ['id']);
             const result = await this.albumsHandler.getAlbumTracks(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_album_tracks');
           }
 
           case 'get_multiple_albums': {
             const args = this.validateArgs<MultipleAlbumsArgs>(request.params.arguments, ['ids']);
             const result = await this.albumsHandler.getMultipleAlbums(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_multiple_albums');
           }
 
           case 'get_track': {
             const args = this.validateArgs<TrackArgs>(request.params.arguments, ['id']);
             const result = await this.tracksHandler.getTrack(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_track');
           }
 
           case 'get_available_genres': {
             const result = await this.tracksHandler.getAvailableGenres();
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
-            };
+            return formatToolResponse(result, 'get_available_genres');
           }
 
           case 'get_new_releases': {
             const args = this.validateArgs<NewReleasesArgs>(request.params.arguments || {}, []);
             const result = await this.albumsHandler.getNewReleases(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_new_releases');
           }
 
           case 'get_recommendations': {
             const args = this.validateArgs<RecommendationsArgs>(request.params.arguments || {}, []);
             const result = await this.tracksHandler.getRecommendations(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_recommendations');
           }
 
           case 'get_user_top_tracks': {
             const args = this.validateArgs<UserTopTracksArgs>(request.params.arguments || {}, []);
             const result = await this.tracksHandler.getUserTopTracks(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_user_top_tracks');
           }
 
           case 'get_audiobook': {
             const args = this.validateArgs<AudiobookArgs>(request.params.arguments, ['id']);
             const result = await this.audiobooksHandler.getAudiobook(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_audiobook');
           }
 
           case 'get_multiple_audiobooks': {
             const args = this.validateArgs<MultipleAudiobooksArgs>(request.params.arguments, ['ids']);
             const result = await this.audiobooksHandler.getMultipleAudiobooks(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_multiple_audiobooks');
           }
 
           case 'get_audiobook_chapters': {
             const args = this.validateArgs<AudiobookChaptersArgs>(request.params.arguments, ['id']);
             const result = await this.audiobooksHandler.getAudiobookChapters(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_audiobook_chapters');
           }
 
           case 'get_playlist': {
             const args = this.validateArgs<PlaylistArgs>(request.params.arguments, ['id']);
             const result = await this.playlistsHandler.getPlaylist(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_playlist');
           }
 
           case 'get_playlist_tracks': {
             const args = this.validateArgs<PlaylistTracksArgs>(request.params.arguments, ['id']);
             const result = await this.playlistsHandler.getPlaylistTracks(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_playlist_tracks');
           }
 
           case 'get_playlist_items': {
             const args = this.validateArgs<PlaylistItemsArgs>(request.params.arguments, ['id']);
             const result = await this.playlistsHandler.getPlaylistItems(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_playlist_items');
           }
 
           case 'modify_playlist': {
             const args = this.validateArgs<ModifyPlaylistArgs>(request.params.arguments, ['id']);
             const result = await this.playlistsHandler.modifyPlaylist(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'modify_playlist');
           }
 
           case 'add_tracks_to_playlist': {
             const args = this.validateArgs<AddTracksToPlaylistArgs>(request.params.arguments, ['id', 'uris']);
             const result = await this.playlistsHandler.addTracksToPlaylist(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'add_tracks_to_playlist');
           }
 
           case 'remove_tracks_from_playlist': {
             const args = this.validateArgs<RemoveTracksFromPlaylistArgs>(request.params.arguments, ['id', 'tracks']);
             const result = await this.playlistsHandler.removeTracksFromPlaylist(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'remove_tracks_from_playlist');
           }
 
           case 'get_current_user_playlists': {
             const args = this.validateArgs<GetCurrentUserPlaylistsArgs>(request.params.arguments || {}, []);
             const result = await this.playlistsHandler.getCurrentUserPlaylists(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_current_user_playlists');
           }
 
           case 'get_featured_playlists': {
             const args = this.validateArgs<GetFeaturedPlaylistsArgs>(request.params.arguments || {}, []);
             const result = await this.playlistsHandler.getFeaturedPlaylists(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_featured_playlists');
           }
 
           case 'get_category_playlists': {
             const args = this.validateArgs<GetCategoryPlaylistsArgs>(request.params.arguments, ['category_id']);
             const result = await this.playlistsHandler.getCategoryPlaylists(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
+            return formatToolResponse(result, 'get_category_playlists');
           }
 
           default:
@@ -1126,7 +1118,10 @@ class SpotifyHttpServer {
       res.setHeader('Keep-Alive', 'timeout=30');
       
       try {
+        // Log raw URL before parsing to debug query param issues
+        logger.debug({ rawUrl: req.url, host: req.headers.host }, 'Raw request URL before parsing');
         const url = new URL(req.url!, `http://${req.headers.host}`);
+        logger.debug({ parsedUrl: url.toString(), search: url.search, searchParams: Object.fromEntries(url.searchParams.entries()) }, 'Parsed URL');
 
         // Set CORS headers
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -1380,11 +1375,13 @@ class SpotifyHttpServer {
                 // Clear the pending request
                 this.authManager.clearPendingOAuthRequest(tokenResult.sessionId);
 
-                // Generate our own authorization code for the client
+                // Generate our own authorization code for the client (preserve PKCE challenge)
                 const authCode = this.authManager.generateAuthorizationCode(
                   tokenResult.sessionId,
                   oauthRequest.clientId,
-                  oauthRequest.redirectUri
+                  oauthRequest.redirectUri,
+                  oauthRequest.codeChallenge,
+                  oauthRequest.codeChallengeMethod
                 );
 
                 // Redirect back to the registered client's redirect_uri with our authorization code
@@ -1733,19 +1730,21 @@ class SpotifyHttpServer {
                   return;
                 }
 
-                // Validate client credentials
-                if (!this.clientRegistrationManager.validateClient(clientId, clientSecret || '')) {
-                  res.writeHead(401, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({
-                    error: 'invalid_client',
-                    error_description: 'Invalid client credentials'
-                  }));
-                  return;
+                // Extract code_verifier for PKCE validation (need to parse params first)
+                let codeVerifier: string | null = null;
+                if (contentType.includes('application/json')) {
+                  const jsonBody = JSON.parse(body);
+                  codeVerifier = jsonBody.code_verifier || null;
+                } else {
+                  const params = new URLSearchParams(body);
+                  codeVerifier = params.get('code_verifier');
                 }
-
-                // Get the registered client to validate redirect_uri
+                const hasPKCE = !!codeVerifier;
+                
+                // Get the client first to check if it exists
                 const client = this.clientRegistrationManager.getClient(clientId);
                 if (!client) {
+                  logger.error({ clientId }, 'Client not found');
                   res.writeHead(401, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({
                     error: 'invalid_client',
@@ -1753,6 +1752,93 @@ class SpotifyHttpServer {
                   }));
                   return;
                 }
+                
+                // Validate client credentials - support both PKCE and client_secret
+                logger.info({
+                  clientId,
+                  hasClientSecret: !!clientSecret,
+                  clientSecretLength: clientSecret?.length || 0,
+                  hasPKCE,
+                  codeVerifierLength: codeVerifier?.length || 0
+                }, 'Validating client credentials');
+                
+                let clientValid = false;
+                
+                // If PKCE is provided, validate it first
+                if (hasPKCE) {
+                  // Peek at authorization code to get PKCE challenge data without consuming it
+                  const authCodeData = this.authManager.peekAuthorizationCode(code, clientId, redirectUri);
+                  if (authCodeData && authCodeData.codeChallenge && authCodeData.codeChallengeMethod) {
+                    // Validate PKCE: code_verifier should hash to code_challenge
+                    const crypto = await import('crypto');
+                    let calculatedChallenge: string;
+                    if (authCodeData.codeChallengeMethod === 'S256') {
+                      calculatedChallenge = crypto.createHash('sha256')
+                        .update(codeVerifier!)
+                        .digest('base64url');
+                    } else if (authCodeData.codeChallengeMethod === 'plain') {
+                      calculatedChallenge = codeVerifier!;
+                    } else {
+                      logger.error({ method: authCodeData.codeChallengeMethod }, 'Unsupported code challenge method');
+                      res.writeHead(400, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({
+                        error: 'invalid_request',
+                        error_description: 'Unsupported code challenge method'
+                      }));
+                      return;
+                    }
+                    
+                    if (calculatedChallenge === authCodeData.codeChallenge) {
+                      clientValid = true;
+                      logger.info({ clientId }, 'PKCE validation successful');
+                    } else {
+                      logger.warn({ 
+                        clientId,
+                        calculatedLength: calculatedChallenge.length,
+                        storedLength: authCodeData.codeChallenge.length
+                      }, 'PKCE validation failed - code_verifier does not match code_challenge');
+                    }
+                  } else {
+                    logger.warn({ 
+                      clientId,
+                      hasAuthCode: !!authCodeData,
+                      hasCodeChallenge: !!authCodeData?.codeChallenge
+                    }, 'PKCE requested but no code_challenge found in authorization code');
+                  }
+                }
+                
+                // Fall back to client_secret validation if PKCE not used or failed
+                if (!clientValid) {
+                  if (!clientSecret) {
+                    logger.error({
+                      clientId,
+                      hasPKCE,
+                      tokenEndpointAuthMethod: client.token_endpoint_auth_method
+                    }, 'Client secret required but not provided (PKCE validation failed or not used)');
+                    res.writeHead(401, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                      error: 'invalid_client',
+                      error_description: 'Client secret required or PKCE validation failed'
+                    }));
+                    return;
+                  }
+                  
+                  clientValid = this.clientRegistrationManager.validateClient(clientId, clientSecret);
+                  if (!clientValid) {
+                    logger.error({
+                      clientId,
+                      hasClientSecret: !!clientSecret
+                    }, 'Client validation failed - returning invalid_client error');
+                    res.writeHead(401, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                      error: 'invalid_client',
+                      error_description: 'Invalid client credentials'
+                    }));
+                    return;
+                  }
+                }
+
+                // Client is already retrieved above, use it for redirect_uri validation
 
                 // Validate redirect_uri
                 if (!client.redirect_uris.includes(redirectUri)) {
@@ -1785,20 +1871,38 @@ class SpotifyHttpServer {
                   ? authStatus.expiresInMinutes * 60
                   : 3600;
 
-                // Build token response
-                const tokenResponse = {
+                // Get refresh token from stored token (needed for MCP clients to refresh tokens)
+                const storedToken = this.authManager.getTokenBySession(sessionId);
+                const refreshToken = storedToken?.refreshToken || null;
+
+                // Build token response (OAuth 2.0 compliant)
+                const tokenResponse: {
+                  access_token: string;
+                  token_type: string;
+                  expires_in: number;
+                  scope: string;
+                  refresh_token?: string;
+                  session_id?: string; // MCP-specific: include sessionId for client to use when connecting
+                } = {
                   access_token: accessToken,
                   token_type: 'Bearer',
                   expires_in: expiresIn,
                   scope: client.scope || this.REQUIRED_SCOPES,
-                  // Note: We're using Spotify's tokens directly, so we don't have our own refresh token
-                  // The session management handles token refresh automatically
+                  session_id: sessionId // Include sessionId so client knows what to use for /mcp connection
                 };
+
+                // Include refresh_token if available (required for MCP clients)
+                if (refreshToken) {
+                  tokenResponse.refresh_token = refreshToken;
+                } else {
+                  logger.warn({ sessionId, clientId }, 'No refresh token available for session');
+                }
 
                 logger.info({
                   clientId,
                   sessionId,
-                  expiresIn: tokenResponse.expires_in
+                  expiresIn: tokenResponse.expires_in,
+                  hasRefreshToken: !!refreshToken
                 }, 'Token exchange successful');
 
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1823,17 +1927,30 @@ class SpotifyHttpServer {
         // MCP endpoint with Authorization Discovery
         if (url.pathname === '/mcp') {
           if (req.method === 'GET') {
+            logger.info({ 
+              url: req.url, 
+              method: req.method,
+              headers: Object.keys(req.headers),
+              hasAuthHeader: !!req.headers['authorization'],
+              authHeaderPrefix: req.headers['authorization']?.substring(0, 20) || 'none',
+              queryParams: Object.fromEntries(url.searchParams.entries())
+            }, 'MCP connection attempt received');
+            
             // Check if client provided a sessionId
             let clientSessionId = url.searchParams.get('sessionId');
+            logger.info({ sessionId: clientSessionId, url: req.url, allParams: Object.fromEntries(url.searchParams.entries()) }, 'SessionId from query params');
 
             // Check for Authorization header (Bearer token)
             const authHeader = req.headers['authorization'];
             if (!clientSessionId && authHeader && authHeader.startsWith('Bearer ')) {
               // Extract access token from Bearer header
               const accessToken = authHeader.substring(7);
+              logger.info({ tokenPrefix: accessToken.substring(0, 20) + '...' }, 'Attempting to find session by Bearer token');
 
               // Find session by access token
               const allSessions = this.authManager.getAllSessions();
+              logger.info({ sessionCount: allSessions.length }, 'Searching sessions for matching token');
+              
               for (const session of allSessions) {
                 try {
                   const sessionToken = await this.authManager.getAccessToken(session.sessionId);
@@ -1844,8 +1961,14 @@ class SpotifyHttpServer {
                   }
                 } catch (error) {
                   // Skip sessions that fail to get token
+                  logger.debug({ sessionId: session.sessionId, error }, 'Failed to get token for session, skipping');
                   continue;
                 }
+              }
+              
+              if (!clientSessionId) {
+                logger.warn({ tokenPrefix: accessToken.substring(0, 20) + '...', sessionCount: allSessions.length }, 
+                  'Bearer token provided but no matching session found');
               }
             }
 
@@ -1904,6 +2027,11 @@ class SpotifyHttpServer {
             if (clientSessionId) {
               this.sessionIdMapping.set(transport.sessionId, clientSessionId);
               this.transports.set(clientSessionId, transport);
+              logger.info({ 
+                customSessionId: clientSessionId, 
+                transportSessionId: transport.sessionId,
+                totalTransports: this.transports.size
+              }, 'Transport stored with custom sessionId mapping');
             }
 
             const displaySessionId = clientSessionId || transport.sessionId;
@@ -1933,22 +2061,91 @@ class SpotifyHttpServer {
             // Handle incoming messages
             const transportSessionId = url.searchParams.get('sessionId');
 
+            logger.info({ 
+              transportSessionId, 
+              transportSessionIdLength: transportSessionId?.length,
+              availableTransports: Array.from(this.transports.keys()),
+              url: req.url
+            }, 'MCP POST request received');
+
             if (!transportSessionId) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Missing sessionId parameter' }));
               return;
             }
 
-            const transport = this.transports.get(transportSessionId);
+            // Try to find transport by exact match first
+            let transport = this.transports.get(transportSessionId);
+            
+            // If not found, try to find by looking up via sessionId mapping (reverse lookup)
             if (!transport) {
+              // Check if any transport has this sessionId mapped to it
+              for (const [transportId, mappedSessionId] of this.sessionIdMapping.entries()) {
+                if (mappedSessionId === transportSessionId) {
+                  logger.info({ 
+                    providedSessionId: transportSessionId, 
+                    foundTransportId: transportId 
+                  }, 'Found transport via sessionId mapping');
+                  transport = this.transports.get(transportId);
+                  break;
+                }
+              }
+            }
+            
+            // If still not found, try to find by partial match (in case sessionId was truncated in GET)
+            if (!transport && transportSessionId.length > 20) {
+              // Try matching against mapped sessionIds
+              for (const [transportId, mappedSessionId] of this.sessionIdMapping.entries()) {
+                if (mappedSessionId && (
+                  mappedSessionId.startsWith(transportSessionId) || 
+                  transportSessionId.startsWith(mappedSessionId.substring(0, transportSessionId.length))
+                )) {
+                  logger.warn({ 
+                    providedSessionId: transportSessionId, 
+                    matchedSessionId: mappedSessionId,
+                    transportId: transportId
+                  }, 'Using partial sessionId match via mapping');
+                  transport = this.transports.get(transportId);
+                  break;
+                }
+              }
+              
+              // Also try direct key matching
+              if (!transport) {
+                const partialMatch = Array.from(this.transports.keys()).find(key => 
+                  key.startsWith(transportSessionId) || transportSessionId.startsWith(key.substring(0, transportSessionId.length))
+                );
+                if (partialMatch) {
+                  logger.warn({ 
+                    providedSessionId: transportSessionId, 
+                    matchedSessionId: partialMatch 
+                  }, 'Using partial sessionId match on transport key');
+                  transport = this.transports.get(partialMatch);
+                }
+              }
+            }
+
+            if (!transport) {
+              logger.error({ 
+                transportSessionId, 
+                availableTransports: Array.from(this.transports.keys()).map(k => k.substring(0, 50) + '...')
+              }, 'Session not found for POST request');
               res.writeHead(404, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Session not found' }));
+              res.end(JSON.stringify({ 
+                error: 'Session not found',
+                provided_session_id: transportSessionId,
+                hint: 'Make sure you use the full sessionId from the token response'
+              }));
               return;
             }
+
+            logger.info({ transportSessionId }, 'Transport found for POST request');
 
             // Resolve to custom sessionId if one was provided during connection
             const customSessionId = this.sessionIdMapping.get(transportSessionId);
             const sessionId = customSessionId || transportSessionId;
+            
+            logger.info({ transportSessionId, customSessionId, resolvedSessionId: sessionId }, 'Resolved sessionId for POST request');
 
             // Verify session still has valid auth for POST requests
             const authStatus = await this.getCachedAuthStatus(sessionId);

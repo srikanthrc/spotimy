@@ -1,6 +1,6 @@
 {
   "name": "spotimy-mcp",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "SpotiMy (building on top of ArtistLens) - A powerful Spotify MCP Server integration for accessing your Spotify library",
   "type": "module",
   "bin": {
@@ -20,7 +20,8 @@
     "inspector": "npx @modelcontextprotocol/inspector build/index.js",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
-    "test:http": "bun test src/__tests__/http-transport.test.ts"
+    "test:http": "bun test src/__tests__/http-transport.test.ts",
+    "validate:tools": "bun src/__tests__/validate-tools.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "0.6.0",

@@ -36,6 +36,8 @@ export class AuthManager {
     clientId: string;
     redirectUri: string;
     expiresAt: number;
+    codeChallenge?: string | null;
+    codeChallengeMethod?: string | null;
   }>();
 
   // Fallback client credentials token (for unauthenticated requests)
@@ -219,23 +221,63 @@ export class AuthManager {
   /**
    * Generate and store an authorization code for a registered client
    */
-  generateAuthorizationCode(sessionId: string, clientId: string, redirectUri: string): string {
+  generateAuthorizationCode(
+    sessionId: string, 
+    clientId: string, 
+    redirectUri: string,
+    codeChallenge?: string | null,
+    codeChallengeMethod?: string | null
+  ): string {
     const code = crypto.randomBytes(32).toString('base64url');
 
     this.authorizationCodes.set(code, {
       sessionId,
       clientId,
       redirectUri,
-      expiresAt: Date.now() + 10 * 60 * 1000  // 10 minutes
+      expiresAt: Date.now() + 10 * 60 * 1000,  // 10 minutes
+      codeChallenge,
+      codeChallengeMethod
     });
 
     logger.info({
       code: code.substring(0, 20) + '...',
       sessionId,
-      clientId
+      clientId,
+      hasCodeChallenge: !!codeChallenge
     }, 'Generated authorization code for registered client');
 
     return code;
+  }
+
+  /**
+   * Get authorization code data without consuming it (for PKCE validation)
+   */
+  peekAuthorizationCode(code: string, clientId: string, redirectUri: string): {
+    sessionId: string;
+    codeChallenge?: string | null;
+    codeChallengeMethod?: string | null;
+  } | null {
+    const authCode = this.authorizationCodes.get(code);
+
+    if (!authCode) {
+      return null;
+    }
+
+    // Check expiration
+    if (Date.now() > authCode.expiresAt) {
+      return null;
+    }
+
+    // Validate client and redirect URI
+    if (authCode.clientId !== clientId || authCode.redirectUri !== redirectUri) {
+      return null;
+    }
+
+    return {
+      sessionId: authCode.sessionId,
+      codeChallenge: authCode.codeChallenge,
+      codeChallengeMethod: authCode.codeChallengeMethod
+    };
   }
 
   /**
@@ -613,6 +655,13 @@ export class AuthManager {
    */
   getAllSessions() {
     return this.tokenStore.getAllSessions();
+  }
+
+  /**
+   * Get token by session ID (for retrieving refresh token)
+   */
+  getTokenBySession(sessionId: string) {
+    return this.tokenStore.getTokenBySession(sessionId);
   }
 
   /**
