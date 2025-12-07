@@ -242,15 +242,7 @@ export const outputSchemas: Record<string, any> = {
   },
 
   // === Artist Tools ===
-  get_artist: {
-    type: 'object',
-    properties: {
-      id: { type: 'string' },
-      name: { type: 'string' },
-      uri: { type: 'string' }
-    },
-    required: ['id', 'name', 'uri']
-  },
+  get_artist: simpleArtist,
 
   get_multiple_artists: {
     type: 'object',
@@ -298,17 +290,7 @@ export const outputSchemas: Record<string, any> = {
   },
 
   // === Album Tools ===
-  get_album: {
-    type: 'object',
-    properties: {
-      id: { type: 'string' },
-      name: { type: 'string' },
-      artists: { type: 'array', items: simpleArtist },
-      images: { type: 'array', items: simpleImage },
-      uri: { type: 'string' }
-    },
-    required: ['id', 'name', 'uri']
-  },
+  get_album: simpleAlbum,
 
   get_album_tracks: {
     type: 'object',
@@ -340,18 +322,7 @@ export const outputSchemas: Record<string, any> = {
   },
 
   // === Track Tools ===
-  get_track: {
-    type: 'object',
-    properties: {
-      id: { type: 'string' },
-      name: { type: 'string' },
-      artists: { type: 'array', items: simpleArtist },
-      album: simpleAlbum,
-      duration_ms: { type: 'number' },
-      uri: { type: 'string' }
-    },
-    required: ['id', 'name', 'uri']
-  },
+  get_track: simpleTrack,
 
   get_available_genres: {
     type: 'object',

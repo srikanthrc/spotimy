@@ -542,36 +542,6 @@ class SpotifyHttpServer {
           outputSchema: outputSchemas.get_recommendations
         },
         {
-          name: 'get_user_top_tracks',
-          description: 'Get the current user\'s top tracks based on calculated affinity',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              time_range: {
-                type: 'string',
-                enum: ['short_term', 'medium_term', 'long_term'],
-                description: 'Over what time frame the affinities are computed. short_term (4 weeks), medium_term (6 months), long_term (several years)',
-                default: 'medium_term'
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of tracks to return (1-50)',
-                minimum: 1,
-                maximum: 50,
-                default: 20
-              },
-              offset: {
-                type: 'number',
-                description: 'The index of the first track to return',
-                minimum: 0,
-                default: 0
-              }
-            },
-            required: []
-          },
-          outputSchema: outputSchemas.get_user_top_tracks
-        },
-        {
           name: 'get_audiobook',
           description: 'Get Spotify catalog information for an audiobook',
           inputSchema: {
@@ -823,6 +793,36 @@ class SpotifyHttpServer {
             required: ['id', 'tracks']
           },
           outputSchema: outputSchemas.remove_tracks_from_playlist
+        },
+        {
+          name: 'get_user_top_tracks',
+          description: 'Get the current user\'s top tracks based on calculated affinity',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              time_range: {
+                type: 'string',
+                enum: ['short_term', 'medium_term', 'long_term'],
+                description: 'Over what time frame the affinities are computed. short_term (4 weeks), medium_term (6 months), long_term (several years)',
+                default: 'medium_term'
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum number of tracks to return (1-50)',
+                minimum: 1,
+                maximum: 50,
+                default: 20
+              },
+              offset: {
+                type: 'number',
+                description: 'The index of the first track to return',
+                minimum: 0,
+                default: 0
+              }
+            },
+            required: []
+          },
+          outputSchema: outputSchemas.get_user_top_tracks
         },
         {
           name: 'get_current_user_playlists',
