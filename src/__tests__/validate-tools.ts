@@ -2,8 +2,22 @@
 /**
  * Tool Validation Script
  * 
- * Validates all MCP tools against the running Docker instance.
+ * Validates all 29 MCP tools against the running Docker instance.
  * Tests each tool with sample inputs and validates responses match output schemas.
+ * 
+ * Tools tested:
+ * - Session: get_session_info, get_access_token
+ * - Search: search (track, album, artist, playlist, show, episode)
+ * - Artists: get_artist, get_multiple_artists, get_artist_top_tracks, get_artist_related_artists, get_artist_albums
+ * - Albums: get_album, get_album_tracks, get_multiple_albums, get_new_releases
+ * - Tracks: get_track, get_recommendations, get_available_genres, get_user_top_tracks
+ * - Audiobooks: get_audiobook, get_multiple_audiobooks, get_audiobook_chapters
+ * - Shows: get_show, get_show_episodes
+ * - Playlists: get_playlist, get_playlist_tracks, get_playlist_items, get_current_user_playlists
+ * - Playlist Write: create_playlist, modify_playlist, add_tracks_to_playlist, remove_tracks_from_playlist
+ * 
+ * Usage:
+ *   SESSION_ID=<your-session-id> bun src/__tests__/validate-tools.ts
  */
 
 import { EventSource } from 'eventsource';
@@ -36,8 +50,8 @@ const TEST_DATA = {
   trackId: '4uLU6hMCjMI75M1A2tKUQC', // Paranoid Android
   playlistId: '37i9dQZF1DXcBWIGoYBM5M', // Today's Top Hits
   audiobookId: '7iHfbu1YPACw6oZPAFJtqe', // Example audiobook
+  showId: '4rOoJ6Egrf8K2IrywzwOMk', // The Joe Rogan Experience
   userId: 'spotify', // Spotify's official account
-  categoryId: 'pop', // Pop category
   genre: 'rock',
   query: 'radiohead',
 };
@@ -434,32 +448,49 @@ async function main() {
     
     // Define test cases for each tool
     const testCases: Record<string, Partial<Tool>> = {
+      // Session & Auth
       get_session_info: {},
       get_access_token: {},
+      
+      // Search (supports: track, album, artist, playlist, show, episode)
       search: { testArgs: { query: TEST_DATA.query, type: 'track', limit: 5 } },
+      
+      // Artists
       get_artist: { testArgs: { id: TEST_DATA.artistId } },
       get_multiple_artists: { testArgs: { ids: [TEST_DATA.artistId, '1Xyo4u8uXC1ZmMpatF05PJ'] } },
       get_artist_top_tracks: { testArgs: { id: TEST_DATA.artistId, market: 'US' } },
-      get_artist_related_artists: { testArgs: { id: '1Xyo4u8uXC1ZmMpatF05PJ' }, reason: 'May fail if artist has no related artists' }, // The Weeknd - more popular
+      get_artist_related_artists: { testArgs: { id: '1Xyo4u8uXC1ZmMpatF05PJ' }, reason: 'May fail if artist has no related artists' },
       get_artist_albums: { testArgs: { id: TEST_DATA.artistId, limit: 5 } },
+      
+      // Albums
       get_album: { testArgs: { id: TEST_DATA.albumId } },
       get_album_tracks: { testArgs: { id: TEST_DATA.albumId, limit: 5 } },
       get_multiple_albums: { testArgs: { ids: [TEST_DATA.albumId, '1ATL5GLyefJaxhQzSPVrLX'] } },
       get_new_releases: { testArgs: { limit: 5, country: 'US' } },
+      
+      // Tracks
       get_track: { testArgs: { id: TEST_DATA.trackId } },
       get_recommendations: { testArgs: { seed_artists: [TEST_DATA.artistId], limit: 5 }, reason: 'Using seed_artists instead of genres' },
       get_available_genres: { reason: 'May require specific API access' },
       get_user_top_tracks: { testArgs: { limit: 5 } },
+      
+      // Audiobooks
       get_audiobook: { testArgs: { id: TEST_DATA.audiobookId } },
       get_multiple_audiobooks: { testArgs: { ids: [TEST_DATA.audiobookId] } },
       get_audiobook_chapters: { testArgs: { id: TEST_DATA.audiobookId, limit: 5 } },
+      
+      // Shows (Podcasts)
+      get_show: { testArgs: { id: TEST_DATA.showId } },
+      get_show_episodes: { testArgs: { id: TEST_DATA.showId, limit: 5 } },
+      
+      // Playlists
       get_playlist: { testArgs: { id: testPlaylistId || TEST_DATA.playlistId }, reason: testPlaylistId ? 'Using user playlist' : 'Using public playlist' },
       get_playlist_tracks: { testArgs: { id: testPlaylistId || TEST_DATA.playlistId, limit: 5 }, reason: testPlaylistId ? 'Using user playlist' : 'Using public playlist' },
       get_playlist_items: { testArgs: { id: testPlaylistId || TEST_DATA.playlistId, limit: 5 }, reason: testPlaylistId ? 'Using user playlist' : 'Using public playlist' },
       get_current_user_playlists: { testArgs: { limit: 5 } },
-      get_featured_playlists: { testArgs: { limit: 5, locale: 'en_US' }, reason: 'May require locale parameter' },
-      get_category_playlists: { testArgs: { category_id: '0JQ5DAqbMKFEC4WFtoNRpw', limit: 5 }, reason: 'Using known category ID (Pop)' },
-      // Skip write operations for now
+      
+      // Write operations - skip for safety
+      create_playlist: { skip: true, reason: 'Write operation - would create a playlist' },
       modify_playlist: { skip: true, reason: 'Write operation - requires test playlist' },
       add_tracks_to_playlist: { skip: true, reason: 'Write operation - requires test playlist' },
       remove_tracks_from_playlist: { skip: true, reason: 'Write operation - requires test playlist' },

@@ -9,13 +9,14 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import packageJson from '../package.json' assert { type: 'json' };
 
+import logger from './utils/logger.js';
 import { AuthManager } from './utils/auth.js';
 import { SpotifyApi } from './utils/api.js';
-import logger from './utils/logger.js';
 import { ArtistsHandler } from './handlers/artists.js';
 import { AlbumsHandler } from './handlers/albums.js';
 import { TracksHandler } from './handlers/tracks.js';
 import { AudiobooksHandler } from './handlers/audiobooks.js';
+import { ShowsHandler } from './handlers/shows.js';
 import { PlaylistsHandler } from './handlers/playlists.js';
 import { SearchHandler } from './handlers/search.js';
 
@@ -38,7 +39,8 @@ import {
   UserTopTracksArgs,
 } from './types/tracks.js';
 import { AudiobookArgs, MultipleAudiobooksArgs, AudiobookChaptersArgs } from './types/audiobooks.js';
-import { PlaylistArgs, PlaylistTracksArgs, PlaylistItemsArgs, ModifyPlaylistArgs, AddTracksToPlaylistArgs, RemoveTracksFromPlaylistArgs, GetCurrentUserPlaylistsArgs, GetFeaturedPlaylistsArgs, GetCategoryPlaylistsArgs } from './types/playlists.js';
+import { ShowArgs, ShowEpisodesArgs } from './types/shows.js';
+import { PlaylistArgs, PlaylistTracksArgs, PlaylistItemsArgs, ModifyPlaylistArgs, AddTracksToPlaylistArgs, RemoveTracksFromPlaylistArgs, GetCurrentUserPlaylistsArgs, CreatePlaylistArgs } from './types/playlists.js';
 import { SearchArgs as SearchArgsType } from './types/search.js';
 
 class SpotifyServer {
@@ -70,6 +72,7 @@ class SpotifyServer {
   private albumsHandler: AlbumsHandler;
   private tracksHandler: TracksHandler;
   private audiobooksHandler: AudiobooksHandler;
+  private showsHandler: ShowsHandler;
   private playlistsHandler: PlaylistsHandler;
 
   constructor() {
@@ -92,6 +95,7 @@ class SpotifyServer {
     this.albumsHandler = new AlbumsHandler(this.api);
     this.tracksHandler = new TracksHandler(this.api);
     this.audiobooksHandler = new AudiobooksHandler(this.api);
+    this.showsHandler = new ShowsHandler(this.api);
     this.playlistsHandler = new PlaylistsHandler(this.api);
 
     this.setupToolHandlers();
@@ -117,7 +121,7 @@ class SpotifyServer {
         },
         {
           name: 'search',
-          description: 'Search for tracks, albums, artists, or playlists',
+          description: 'Search for tracks, albums, artists, playlists, shows (podcasts), or episodes',
           inputSchema: {
             type: 'object',
             properties: {
@@ -127,8 +131,8 @@ class SpotifyServer {
               },
               type: {
                 type: 'string',
-                description: 'Type of item to search for',
-                enum: ['track', 'album', 'artist', 'playlist']
+                description: 'Type of item to search for: track, album, artist, playlist, show, or episode',
+                enum: ['track', 'album', 'artist', 'playlist', 'show', 'episode']
               },
               limit: {
                 type: 'number',
@@ -473,6 +477,53 @@ class SpotifyServer {
           },
         },
         {
+          name: 'get_show',
+          description: 'Get Spotify catalog information for a podcast show',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              id: {
+                type: 'string',
+                description: 'The Spotify ID or URI for the show'
+              },
+              market: {
+                type: 'string',
+                description: 'Optional. An ISO 3166-1 alpha-2 country code'
+              }
+            },
+            required: ['id']
+          },
+        },
+        {
+          name: 'get_show_episodes',
+          description: 'Get Spotify catalog information about a show\'s episodes',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              id: {
+                type: 'string',
+                description: 'The Spotify ID or URI for the show'
+              },
+              market: {
+                type: 'string',
+                description: 'Optional. An ISO 3166-1 alpha-2 country code'
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum number of episodes to return (1-50)',
+                minimum: 1,
+                maximum: 50
+              },
+              offset: {
+                type: 'number',
+                description: 'The index of the first episode to return',
+                minimum: 0
+              }
+            },
+            required: ['id']
+          },
+        },
+        {
           name: 'get_playlist',
           description: 'Get a playlist owned by a Spotify user',
           inputSchema: {
@@ -670,52 +721,29 @@ class SpotifyServer {
           },
         },
         {
-          name: 'get_featured_playlists',
-          description: 'Get a list of Spotify featured playlists',
+          name: 'create_playlist',
+          description: 'Create a new playlist for the current user',
           inputSchema: {
             type: 'object',
             properties: {
-              locale: {
+              name: {
                 type: 'string',
-                description: 'Optional. Desired language (format: es_MX)'
+                description: 'The name for the new playlist'
               },
-              limit: {
-                type: 'number',
-                description: 'Optional. Maximum number of playlists (1-50)',
-                minimum: 1,
-                maximum: 50
-              },
-              offset: {
-                type: 'number',
-                description: 'Optional. Index of the first playlist to return',
-                minimum: 0
-              }
-            }
-          },
-        },
-        {
-          name: 'get_category_playlists',
-          description: 'Get a list of Spotify playlists tagged with a particular category',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              category_id: {
+              description: {
                 type: 'string',
-                description: 'The Spotify category ID'
+                description: 'Optional. Description for the playlist'
               },
-              limit: {
-                type: 'number',
-                description: 'Optional. Maximum number of playlists (1-50)',
-                minimum: 1,
-                maximum: 50
+              public: {
+                type: 'boolean',
+                description: 'Optional. If true the playlist will be public, if false it will be private. Default: true'
               },
-              offset: {
-                type: 'number',
-                description: 'Optional. Index of the first playlist to return',
-                minimum: 0
+              collaborative: {
+                type: 'boolean',
+                description: 'Optional. If true the playlist will be collaborative. Note: to create a collaborative playlist you must also set public to false.'
               }
             },
-            required: ['category_id']
+            required: ['name']
           },
         }
       ],
@@ -866,6 +894,22 @@ class SpotifyServer {
             };
           }
 
+          case 'get_show': {
+            const args = this.validateArgs<ShowArgs>(request.params.arguments, ['id']);
+            const result = await this.showsHandler.getShow(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'get_show_episodes': {
+            const args = this.validateArgs<ShowEpisodesArgs>(request.params.arguments, ['id']);
+            const result = await this.showsHandler.getShowEpisodes(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
           case 'get_playlist': {
             const args = this.validateArgs<PlaylistArgs>(request.params.arguments, ['id']);
             const result = await this.playlistsHandler.getPlaylist(args);
@@ -922,17 +966,9 @@ class SpotifyServer {
             };
           }
 
-          case 'get_featured_playlists': {
-            const args = this.validateArgs<GetFeaturedPlaylistsArgs>(request.params.arguments || {}, []);
-            const result = await this.playlistsHandler.getFeaturedPlaylists(args);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-            };
-          }
-
-          case 'get_category_playlists': {
-            const args = this.validateArgs<GetCategoryPlaylistsArgs>(request.params.arguments, ['category_id']);
-            const result = await this.playlistsHandler.getCategoryPlaylists(args);
+          case 'create_playlist': {
+            const args = this.validateArgs<CreatePlaylistArgs>(request.params.arguments, ['name']);
+            const result = await this.playlistsHandler.createPlaylist(args);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
             };

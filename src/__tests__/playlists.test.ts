@@ -75,29 +75,22 @@ describe('PlaylistsHandler', () => {
     });
   });
 
-  describe('getFeaturedPlaylists', () => {
-    it('should fetch featured playlists', async () => {
-      const mockResponse = { message: 'Featured', playlists: { items: [] } };
-      mockApi.makeRequest = mock(() => Promise.resolve(mockResponse));
-      mockApi.buildQueryString = mock(() => '?limit=20&offset=0');
+  describe('createPlaylist', () => {
+    it('should create a playlist', async () => {
+      const meResponse = { id: 'user123' };
+      const playlistResponse = { id: 'playlist123', name: 'New Playlist' };
+      let callCount = 0;
+      mockApi.makeRequest = mock(() => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve(meResponse);
+        return Promise.resolve(playlistResponse);
+      });
       handler = new PlaylistsHandler(mockApi as unknown as SpotifyApi);
 
-      const result = await handler.getFeaturedPlaylists({});
+      const result = await handler.createPlaylist({ name: 'New Playlist' });
 
-      expect(result).toEqual(mockResponse);
+      expect(result).toEqual(playlistResponse);
     });
   });
 
-  describe('getCategoryPlaylists', () => {
-    it('should fetch category playlists', async () => {
-      const mockResponse = { playlists: { items: [] } };
-      mockApi.makeRequest = mock(() => Promise.resolve(mockResponse));
-      mockApi.buildQueryString = mock(() => '?limit=20&offset=0');
-      handler = new PlaylistsHandler(mockApi as unknown as SpotifyApi);
-
-      const result = await handler.getCategoryPlaylists({ category_id: 'pop' });
-
-      expect(result).toEqual(mockResponse);
-    });
-  });
 });

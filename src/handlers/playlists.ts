@@ -1,5 +1,5 @@
 import { SpotifyApi } from '../utils/api.js';
-import { PlaylistArgs, PlaylistTracksArgs, PlaylistItemsArgs, ModifyPlaylistArgs, AddTracksToPlaylistArgs, RemoveTracksFromPlaylistArgs, GetCurrentUserPlaylistsArgs, GetFeaturedPlaylistsArgs, GetCategoryPlaylistsArgs } from '../types/playlists.js';
+import { PlaylistArgs, PlaylistTracksArgs, PlaylistItemsArgs, ModifyPlaylistArgs, AddTracksToPlaylistArgs, RemoveTracksFromPlaylistArgs, GetCurrentUserPlaylistsArgs, GetCategoryPlaylistsArgs, GetCategoriesArgs, CreatePlaylistArgs } from '../types/playlists.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 
 export class PlaylistsHandler {
@@ -114,17 +114,24 @@ export class PlaylistsHandler {
     );
   }
 
-  async getFeaturedPlaylists(args: GetFeaturedPlaylistsArgs) {
-    const { locale, limit, offset } = args;
+  async createPlaylist(args: CreatePlaylistArgs) {
+    const { name, description, public: isPublic, collaborative } = args;
 
-    const params = {
-      ...(locale !== undefined && { locale }),
-      ...(limit !== undefined && { limit }),
-      ...(offset !== undefined && { offset })
+    // First get the current user's ID
+    const me = await this.api.makeRequest('/me') as { id: string };
+    const userId = me.id;
+
+    const data = {
+      name,
+      ...(description !== undefined && { description }),
+      ...(isPublic !== undefined && { public: isPublic }),
+      ...(collaborative !== undefined && { collaborative })
     };
 
     return this.api.makeRequest(
-      `/browse/featured-playlists${this.api.buildQueryString(params)}`
+      `/users/${userId}/playlists`,
+      'POST',
+      data
     );
   }
 
@@ -138,6 +145,20 @@ export class PlaylistsHandler {
 
     return this.api.makeRequest(
       `/browse/categories/${category_id}/playlists${this.api.buildQueryString(params)}`
+    );
+  }
+
+  async getCategories(args: GetCategoriesArgs) {
+    const { locale, limit, offset } = args;
+
+    const params = {
+      ...(locale !== undefined && { locale }),
+      ...(limit !== undefined && { limit }),
+      ...(offset !== undefined && { offset })
+    };
+
+    return this.api.makeRequest(
+      `/browse/categories${this.api.buildQueryString(params)}`
     );
   }
 }

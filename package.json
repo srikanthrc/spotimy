@@ -1,6 +1,6 @@
 {
   "name": "spotimy-mcp",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "SpotiMy (building on top of ArtistLens) - A powerful Spotify MCP Server integration for accessing your Spotify library",
   "type": "module",
   "bin": {

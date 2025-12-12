@@ -6,12 +6,12 @@ services:
     build: .
     container_name: spotimy-mcp-server
     ports:
-      - "3001:3001"  # MCP HTTP server
+      - "${HTTP_PORT:-3333}:${HTTP_PORT:-3333}"  # MCP HTTP server
       - "4040:4040"  # Ngrok web interface
     environment:
       # Server configuration
       - HTTP_HOST=0.0.0.0
-      - HTTP_PORT=3001
+      - HTTP_PORT=${HTTP_PORT:-3333}
 
       # Spotify API credentials (set these in .env file)
       - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
@@ -32,7 +32,7 @@ services:
       - ./.env:/app/.env:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:${HTTP_PORT:-3333}/health"]
       interval: 30s
       timeout: 10s
       retries: 3

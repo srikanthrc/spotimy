@@ -68,8 +68,8 @@ const simpleImage = {
   type: 'object',
   properties: {
     url: { type: 'string' },
-    height: { type: 'number' },
-    width: { type: 'number' }
+    height: { type: ['number', 'null'] },
+    width: { type: ['number', 'null'] }
   }
 };
 
@@ -232,6 +232,58 @@ export const outputSchemas: Record<string, any> = {
                     { type: 'null' }
                   ]
                 },
+                uri: { type: 'string' }
+              }
+            }
+          }
+        }
+      },
+      shows: {
+        type: 'object',
+        properties: {
+          href: { type: 'string' },
+          limit: { type: 'number' },
+          next: { type: ['string', 'null'] },
+          offset: { type: 'number' },
+          previous: { type: ['string', 'null'] },
+          total: { type: 'number' },
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                description: { type: 'string' },
+                publisher: { type: 'string' },
+                total_episodes: { type: 'number' },
+                images: { type: 'array', items: simpleImage },
+                uri: { type: 'string' }
+              }
+            }
+          }
+        }
+      },
+      episodes: {
+        type: 'object',
+        properties: {
+          href: { type: 'string' },
+          limit: { type: 'number' },
+          next: { type: ['string', 'null'] },
+          offset: { type: 'number' },
+          previous: { type: ['string', 'null'] },
+          total: { type: 'number' },
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                description: { type: 'string' },
+                duration_ms: { type: 'number' },
+                release_date: { type: 'string' },
+                images: { type: 'array', items: simpleImage },
                 uri: { type: 'string' }
               }
             }
@@ -434,6 +486,44 @@ export const outputSchemas: Record<string, any> = {
     required: ['items']
   },
 
+  // === Show (Podcast) Tools ===
+  get_show: {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: 'string' },
+      publisher: { type: 'string' },
+      total_episodes: { type: 'number' },
+      images: { type: 'array', items: simpleImage },
+      uri: { type: 'string' }
+    },
+    required: ['id', 'name', 'uri']
+  },
+
+  get_show_episodes: {
+    type: 'object',
+    properties: {
+      ...paginationFields,
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            duration_ms: { type: 'number' },
+            release_date: { type: 'string' },
+            images: { type: 'array', items: simpleImage },
+            uri: { type: 'string' }
+          }
+        }
+      }
+    },
+    required: ['items']
+  },
+
   // === Playlist Tools ===
   get_playlist: {
     type: 'object',
@@ -563,66 +653,23 @@ export const outputSchemas: Record<string, any> = {
     required: ['items']
   },
 
-  get_featured_playlists: {
+  create_playlist: {
     type: 'object',
     properties: {
-      message: { type: 'string' },
-      playlists: {
-        type: 'object',
-        properties: {
-          ...paginationFields,
-          items: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                id: { type: 'string' },
-                name: { type: 'string' },
-                description: { type: ['string', 'null'] },
-                images: {
-                  anyOf: [
-                    { type: 'array', items: simpleImage },
-                    { type: 'null' }
-                  ]
-                },
-                uri: { type: 'string' }
-              }
-            }
-          }
-        }
-      }
+      id: { type: 'string' },
+      name: { type: 'string' },
+      description: { type: ['string', 'null'] },
+      public: { type: 'boolean' },
+      collaborative: { type: 'boolean' },
+      owner: simpleOwner,
+      images: {
+        anyOf: [
+          { type: 'array', items: simpleImage },
+          { type: 'null' }
+        ]
+      },
+      uri: { type: 'string' }
     },
-    required: ['playlists']
-  },
-
-  get_category_playlists: {
-    type: 'object',
-    properties: {
-      playlists: {
-        type: 'object',
-        properties: {
-          ...paginationFields,
-          items: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                id: { type: 'string' },
-                name: { type: 'string' },
-                description: { type: ['string', 'null'] },
-                images: {
-                  anyOf: [
-                    { type: 'array', items: simpleImage },
-                    { type: 'null' }
-                  ]
-                },
-                uri: { type: 'string' }
-              }
-            }
-          }
-        }
-      }
-    },
-    required: ['playlists']
+    required: ['id', 'name', 'uri']
   }
 };
