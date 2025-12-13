@@ -533,6 +533,92 @@ export class AuthManager {
   }
 
   /**
+   * Refresh token for OAuth client (called from /token endpoint with grant_type=refresh_token)
+   * 
+   * This method:
+   * 1. Finds the user associated with the refresh token
+   * 2. Calls Spotify to get new tokens
+   * 3. Updates the stored tokens
+   * 4. Returns the new tokens for the OAuth client
+   */
+  async refreshTokenForClient(refreshToken: string): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+    sessionId?: string;
+  }> {
+    // Find the user by refresh token
+    const existingToken = this.tokenStore.findUserByRefreshToken(refreshToken);
+    
+    if (!existingToken) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'Invalid refresh token - token not found'
+      );
+    }
+
+    logger.info({ userId: existingToken.userId }, 'Refreshing token for OAuth client');
+
+    try {
+      const response = await axios.post('https://accounts.spotify.com/api/token',
+        new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: this.clientId,
+          client_secret: this.clientSecret
+        }).toString(),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        }
+      );
+
+      const { access_token, refresh_token: new_refresh_token, expires_in } = response.data;
+      const expiresAt = Date.now() + (expires_in * 1000);
+
+      // Use new refresh token if Spotify provides one, otherwise keep the old one
+      const finalRefreshToken = new_refresh_token || refreshToken;
+
+      // Update token in store
+      const updatedToken: UserToken = {
+        ...existingToken,
+        accessToken: access_token,
+        refreshToken: finalRefreshToken,
+        expiresAt,
+        updatedAt: Date.now()
+      };
+
+      this.tokenStore.saveUserToken(updatedToken);
+
+      // Get session ID for this user (if exists)
+      const sessions = this.tokenStore.getSessionsForUser(existingToken.userId);
+      const sessionId = sessions.length > 0 ? sessions[0].sessionId : undefined;
+
+      logger.info({ userId: existingToken.userId, sessionId }, 'Token refreshed for OAuth client');
+
+      return {
+        accessToken: access_token,
+        refreshToken: finalRefreshToken,
+        expiresIn: expires_in,
+        sessionId
+      };
+
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const errorData = error.response?.data;
+        const errorMessage = errorData?.error_description || errorData?.error || error.message;
+        logger.error({ error: errorMessage, userId: existingToken.userId }, 'Failed to refresh token for client');
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Failed to refresh access token: ${errorMessage}`
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Validate token by making a test API call
    */
   async validateToken(token: string): Promise<{ valid: boolean; user?: any; error?: string }> {

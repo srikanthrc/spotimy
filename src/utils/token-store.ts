@@ -250,6 +250,25 @@ export class TokenStore {
   }
 
   /**
+   * Find a user by their refresh token
+   * Note: This iterates through all users and decrypts their tokens.
+   * For production with many users, consider adding a hash index.
+   */
+  findUserByRefreshToken(refreshToken: string): UserToken | null {
+    const stmt = this.db.prepare(`SELECT user_id FROM users`);
+    const rows = stmt.all() as Array<{ user_id: string }>;
+
+    for (const row of rows) {
+      const token = this.getUserToken(row.user_id);
+      if (token && token.refreshToken === refreshToken) {
+        return token;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Link a session to a user
    */
   linkSession(sessionId: string, userId: string): void {
@@ -304,6 +323,29 @@ export class TokenStore {
       token.sessionId = sessionId;
     }
     return token;
+  }
+
+  /**
+   * Get all sessions for a user
+   */
+  getSessionsForUser(userId: string): SessionInfo[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM sessions WHERE user_id = ? ORDER BY last_accessed_at DESC
+    `);
+
+    const rows = stmt.all(userId) as Array<{
+      session_id: string;
+      user_id: string;
+      created_at: number;
+      last_accessed_at: number;
+    }>;
+
+    return rows.map(row => ({
+      sessionId: row.session_id,
+      userId: row.user_id,
+      createdAt: row.created_at,
+      lastAccessedAt: row.last_accessed_at
+    }));
   }
 
   /**

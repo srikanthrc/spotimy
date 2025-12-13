@@ -1702,11 +1702,14 @@ class SpotifyHttpServer {
 
                 // Try to parse as JSON first, then fall back to form-urlencoded
                 const contentType = req.headers['content-type'] || '';
+                let refreshTokenParam: string | null = null;
+                
                 if (contentType.includes('application/json')) {
                   const jsonBody = JSON.parse(body);
                   grantType = jsonBody.grant_type;
                   code = jsonBody.code;
                   redirectUri = jsonBody.redirect_uri;
+                  refreshTokenParam = jsonBody.refresh_token || null;
                   // Override with body values if present
                   clientId = jsonBody.client_id || clientId;
                   clientSecret = jsonBody.client_secret || clientSecret;
@@ -1724,6 +1727,7 @@ class SpotifyHttpServer {
                   grantType = params.get('grant_type');
                   code = params.get('code');
                   redirectUri = params.get('redirect_uri');
+                  refreshTokenParam = params.get('refresh_token');
                   // Use body values if present, otherwise use header values
                   clientId = params.get('client_id') || clientId;
                   clientSecret = params.get('client_secret') || clientSecret;
@@ -1746,19 +1750,88 @@ class SpotifyHttpServer {
                   hasCode: !!code,
                   hasRedirectUri: !!redirectUri,
                   hasClientSecret: !!clientSecret,
+                  hasRefreshToken: !!refreshTokenParam,
                   contentType
                 }, 'Token exchange request parsed');
 
                 // Validate grant type
-                if (grantType !== 'authorization_code') {
+                if (grantType !== 'authorization_code' && grantType !== 'refresh_token') {
                   res.writeHead(400, { 'Content-Type': 'application/json' });
                   res.end(JSON.stringify({
                     error: 'unsupported_grant_type',
-                    error_description: 'Only authorization_code grant type is supported'
+                    error_description: 'Supported grant types: authorization_code, refresh_token'
                   }));
                   return;
                 }
 
+                // Handle refresh_token grant type
+                if (grantType === 'refresh_token') {
+                  if (!refreshTokenParam) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                      error: 'invalid_request',
+                      error_description: 'Missing required parameter: refresh_token'
+                    }));
+                    return;
+                  }
+
+                  // Validate client if client_id is provided
+                  if (clientId) {
+                    const client = this.clientRegistrationManager.getClient(clientId);
+                    if (!client) {
+                      logger.warn({ clientId }, 'Token refresh attempted with unknown client');
+                      res.writeHead(401, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({
+                        error: 'invalid_client',
+                        error_description: 'Client not found'
+                      }));
+                      return;
+                    }
+
+                    // Check if client supports refresh_token grant
+                    if (!client.grant_types.includes('refresh_token')) {
+                      res.writeHead(400, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({
+                        error: 'unauthorized_client',
+                        error_description: 'Client is not authorized to use refresh_token grant'
+                      }));
+                      return;
+                    }
+                  }
+
+                  try {
+                    logger.info({ clientId, hasRefreshToken: true }, 'Processing refresh_token grant');
+                    
+                    const result = await this.authManager.refreshTokenForClient(refreshTokenParam);
+                    
+                    const tokenResponse = {
+                      access_token: result.accessToken,
+                      token_type: 'Bearer',
+                      expires_in: result.expiresIn,
+                      refresh_token: result.refreshToken,
+                      ...(result.sessionId && { session_id: result.sessionId })
+                    };
+
+                    logger.info({
+                      clientId,
+                      sessionId: result.sessionId,
+                      expiresIn: result.expiresIn
+                    }, 'Token refresh successful');
+
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify(tokenResponse));
+                  } catch (error) {
+                    logger.error({ error, clientId }, 'Token refresh failed');
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                      error: 'invalid_grant',
+                      error_description: error instanceof Error ? error.message : 'Failed to refresh token'
+                    }));
+                  }
+                  return;
+                }
+
+                // Handle authorization_code grant type
                 // Validate required parameters
                 if (!code || !redirectUri || !clientId) {
                   res.writeHead(400, { 'Content-Type': 'application/json' });
