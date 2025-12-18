@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vermillion-spotify-mcp",
+  "account_id": "a04e25d27bf48978f1e60005d78fc8f5",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-12-17",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Non-sensitive environment variables (like docker-compose environment:)
+  // Secrets (SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET) are set via `wrangler secret put`
+  "vars": {
+    "WORKER_URL": "https://vermillion-spotify-mcp.vermillion-a04.workers.dev"
+  },
+
+  // Container configuration - runs existing Dockerfile
+  "containers": [
+    {
+      "class_name": "SpotifyMcpContainer",
+      "image": "../../Dockerfile.cloudflare",
+      "max_instances": 5
+    }
+  ],
+
+  // Durable Object binding for the container
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SPOTIFY_MCP",
+        "class_name": "SpotifyMcpContainer"
+      }
+    ]
+  },
+
+  // Required for container-backed Durable Objects
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SpotifyMcpContainer"]
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}

@@ -90,7 +90,7 @@ docker-compose logs -f spotimy-mcp # View logs
 
 The server implements the full MCP Authorization Server Discovery flow:
 
-1. **Unauthenticated Request**: Client attempts to connect to `/mcp` without credentials
+1. **Unauthenticated Request**: Client attempts to connect to `/sse` without credentials
 2. **401 Response**: Server returns HTTP 401 with `WWW-Authenticate` header containing `resource_metadata` URL
 3. **Metadata Discovery**: Client fetches `/mcp-metadata` to discover authorization endpoints
 4. **Well-Known Fallback**: Client can also probe `/.well-known/oauth-protected-resource` for metadata

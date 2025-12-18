@@ -78,7 +78,7 @@ describe('HTTP Transport Integration with OAuth', () => {
     });
 
     it('should handle OPTIONS requests', async () => {
-      const response = await fetch(`${BASE_URL}/mcp`, { method: 'OPTIONS' });
+      const response = await fetch(`${BASE_URL}/sse`, { method: 'OPTIONS' });
 
       expect(response.status).toBe(200);
     });
@@ -117,16 +117,16 @@ describe('HTTP Transport Integration with OAuth', () => {
   });
 
   describe('MCP Endpoint Auth', () => {
-    it('should return 401 for unauthenticated GET to /mcp', async () => {
-      const response = await fetch(`${BASE_URL}/mcp`);
+    it('should return 401 for unauthenticated GET to /sse', async () => {
+      const response = await fetch(`${BASE_URL}/sse`);
       
       // Server should require authentication
       expect(response.status).toBe(401);
       expect(response.headers.get('WWW-Authenticate')).toBeTruthy();
     });
 
-    it('should return 400 for POST to /mcp without sessionId', async () => {
-      const response = await fetch(`${BASE_URL}/mcp`, {
+    it('should return 400 for POST to /sse without sessionId', async () => {
+      const response = await fetch(`${BASE_URL}/sse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })

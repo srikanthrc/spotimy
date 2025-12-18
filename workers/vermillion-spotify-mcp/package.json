@@ -1,0 +1,20 @@
+{
+  "name": "vermillion-spotify-mcp",
+  "version": "0.9.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "containers:list": "wrangler containers list",
+    "containers:images": "wrangler containers images list"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.0.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "typescript": "^5.5.2",
+    "wrangler": "^4.55.0"
+  }
+}

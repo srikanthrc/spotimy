@@ -97,7 +97,7 @@ async function findAuthenticatedSession(): Promise<string | null> {
 // Connect to MCP endpoint via SSE and get the endpoint URL
 async function connectMCP(sessionId: string): Promise<{ es: EventSource; endpoint: string }> {
   return new Promise((resolve, reject) => {
-    const es = new EventSource(`${BASE_URL}/mcp?sessionId=${sessionId}`);
+    const es = new EventSource(`${BASE_URL}/sse?sessionId=${sessionId}`);
     let endpointReceived = false;
     
     es.addEventListener('endpoint', (event: any) => {

@@ -1518,7 +1518,7 @@ class SpotifyHttpServer {
             authorizationEndpoint: `${baseUrl}/authorize`,
             tokenEndpoint: `${baseUrl}/token`,
             resourceServer: baseUrl,
-            mcpEndpoint: `${baseUrl}/mcp`,
+            mcpEndpoint: `${baseUrl}/sse`,
             scopes: this.REQUIRED_SCOPES_ARRAY
           };
 
@@ -1534,7 +1534,7 @@ class SpotifyHttpServer {
             authorizationServer: `${baseUrl}/authorize`,
             tokenEndpoint: `${baseUrl}/token`,
             resourceMetadata: `${baseUrl}/mcp-metadata`,
-            mcpEndpoint: `${baseUrl}/mcp`
+            mcpEndpoint: `${baseUrl}/sse`
           };
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2037,7 +2037,7 @@ class SpotifyHttpServer {
         }
 
         // MCP endpoint with Authorization Discovery
-        if (url.pathname === '/mcp') {
+        if (url.pathname === '/sse') {
           if (req.method === 'GET') {
             logger.info({ 
               url: req.url, 
@@ -2130,7 +2130,7 @@ class SpotifyHttpServer {
             }
 
             // Initialize SSE connection (authenticated)
-            const transport = new SSEServerTransport('/mcp', res);
+            const transport = new SSEServerTransport('/sse', res);
 
             // Always store transport by its auto-generated sessionId (for POST handling)
             this.transports.set(transport.sessionId, transport);
@@ -2314,8 +2314,8 @@ class SpotifyHttpServer {
       this.httpServer.listen(port, host, () => {
         logger.info({ host, port }, 'Spotify MCP HTTP server running (Multi-user mode with Authorization Discovery)');
         logger.info('MCP Endpoints:');
-        logger.info('  GET  /mcp                      - MCP SSE connection (requires auth)');
-        logger.info('  POST /mcp                      - MCP message endpoint');
+        logger.info('  GET  /sse                      - MCP SSE connection (requires auth)');
+        logger.info('  POST /sse                      - MCP message endpoint');
         logger.info('');
         logger.info('Authorization Discovery (MCP Spec):');
         logger.info('  GET  /mcp-metadata                           - Resource metadata endpoint');

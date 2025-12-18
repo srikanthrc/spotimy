@@ -4,7 +4,7 @@
 
 A powerful Model Context Protocol (MCP) server that provides access to the Spotify Web API. This server enables seamless interaction with Spotify's music catalog, including searching for tracks, albums, and artists, as well as accessing artist-specific information like top tracks and related artists.
 
-**Current Version:** 0.8.0
+**Current Version:** 0.9.0
 
 ## Features
 
@@ -17,6 +17,7 @@ A powerful Model Context Protocol (MCP) server that provides access to the Spoti
 - ✅ **Structured Output Schemas** - All 28 tools have defined output schemas for validation and structured responses (MCP 2024-11-05+)
 - ✅ **Modern Logging** - Pino-based structured logging with environment-aware formatting
 - ✅ **Docker Support** - Complete Docker setup with ngrok tunneling
+- ✅ **Cloudflare Containers** - Deploy to Cloudflare's edge network with zero code changes
 
 ## Quick Start (Docker)
 
@@ -159,8 +160,8 @@ The server implements MCP Authorization Server Discovery (MCP spec 2.3.2 & 2.3.4
 ## Endpoints
 
 ### MCP Endpoints
-- `GET /mcp?sessionId=<id>` - SSE connection (requires auth)
-- `POST /mcp?sessionId=<id>` - MCP message endpoint
+- `GET /sse?sessionId=<id>` - SSE connection (requires auth)
+- `POST /sse?sessionId=<id>` - MCP message endpoint
 
 ### Authorization Discovery (MCP Spec)
 - `GET /mcp-metadata` - Resource metadata endpoint
@@ -355,6 +356,100 @@ If you get `invalid_client` errors:
 
 ## Deployment
 
+### Cloudflare Workers (Containers)
+
+The MCP server can be deployed to Cloudflare using [Cloudflare Containers](https://developers.cloudflare.com/containers/) which runs the existing Docker image on Cloudflare's edge network.
+
+**Live URL:** `https://vermillion-spotify-mcp.vermillion-a04.workers.dev`
+
+#### Quick Deploy
+
+```bash
+cd workers/vermillion-spotify-mcp
+
+# Set Spotify credentials as secrets
+bunx wrangler secret put SPOTIFY_CLIENT_ID
+bunx wrangler secret put SPOTIFY_CLIENT_SECRET
+
+# Deploy
+bunx wrangler deploy
+```
+
+#### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/` | Worker status and configuration |
+| `/health` | Container health check |
+| `/auth?sessionId=<id>` | Start Spotify OAuth |
+| `/sse?sessionId=<id>` | MCP SSE transport |
+| `/callback` | OAuth callback |
+
+#### Configuration
+
+The Worker is configured in `workers/vermillion-spotify-mcp/wrangler.jsonc`:
+
+- **Container Image**: Built from `Dockerfile.cloudflare` (simplified, no ngrok)
+- **Always-on**: `sleepAfter = "168h"` keeps container running continuously
+- **Secrets**: `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` (set via `wrangler secret`)
+- **Environment**: `WORKER_URL` set in `vars` for OAuth redirect URI
+
+#### Monitoring Logs
+
+**Real-time log streaming:**
+```bash
+cd workers/vermillion-spotify-mcp
+bunx wrangler tail --format=pretty
+```
+
+**Filter options:**
+```bash
+bunx wrangler tail --format=json          # JSON output for parsing
+bunx wrangler tail --status=error         # Only errors
+bunx wrangler tail --status=ok            # Only successful requests
+```
+
+**Cloudflare Dashboard:**
+Navigate to Workers & Pages → vermillion-spotify-mcp → Observability
+
+#### Container Management
+
+```bash
+# List container instances
+bunx wrangler containers list
+
+# View container health
+bunx wrangler containers list | jq '.[0].health'
+
+# Delete container (forces fresh restart)
+bunx wrangler containers delete <application-id>
+```
+
+#### Updating the Deployment
+
+```bash
+cd workers/vermillion-spotify-mcp
+bunx wrangler deploy
+```
+
+The container image is rebuilt and deployed automatically. Changes to `src/` require rebuilding the main project first:
+
+```bash
+# From project root
+bun run build
+cd workers/vermillion-spotify-mcp
+bunx wrangler deploy
+```
+
+#### Spotify App Configuration
+
+Add this redirect URI to your Spotify app:
+```
+https://vermillion-spotify-mcp.vermillion-a04.workers.dev/callback
+```
+
+### Google Cloud Platform
+
 For production deployment on Google Cloud Platform, see [GCP_DEPLOYMENT.md](./GCP_DEPLOYMENT.md).
 
 ## Project Structure
@@ -367,9 +462,17 @@ src/
 ├── http-server.ts    # HTTP transport server (primary)
 └── __tests__/        # Test files
 
+workers/
+└── vermillion-spotify-mcp/
+    ├── src/index.ts   # Cloudflare Container wrapper
+    ├── wrangler.jsonc # Worker configuration
+    └── package.json   # Worker dependencies
+
 data/                 # Runtime data (created automatically)
 ├── tokens.db         # Encrypted token storage (SQLite)
 └── clients.db        # Client registration storage (SQLite)
+
+Dockerfile.cloudflare  # Simplified Docker image for Cloudflare Containers
 ```
 
 ## License
