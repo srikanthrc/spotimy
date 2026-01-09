@@ -71,7 +71,12 @@ export class AuthManager {
       'user-read-private',
       'user-top-read',
       'playlist-modify-public',
-      'playlist-modify-private'
+      'playlist-modify-private',
+      // Playback control scopes
+      'user-read-playback-state',
+      'user-modify-playback-state',
+      'user-read-currently-playing',
+      'user-read-recently-played'
     ];
 
     logger.info({ redirectUri: this.redirectUri }, 'AuthManager initialized with multi-user support');
@@ -321,43 +326,247 @@ export class AuthManager {
 
   /**
    * Get authorization page HTML for a specific session
+   * Single-step consent screen - shows permissions and the app requesting access
    */
   getAuthorizationPageHtml(sessionId: string): string {
     const authUrl = this.getAuthorizationUrl(sessionId);
-    return `
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>Spotify Authorization</title>
-          <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white; }
-            .container { max-width: 500px; margin: 0 auto; }
-            .auth-btn { background: #1db954; color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: bold; font-size: 16px; display: inline-block; margin: 20px 0; }
-            .auth-btn:hover { background: #1ed760; }
-            .info { background: #282828; padding: 20px; border-radius: 10px; margin: 20px 0; }
-            .session-id { font-family: monospace; color: #1db954; font-size: 12px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <h1>🎵 Spotify Authorization</h1>
-            <p>Click the button below to authorize this session to access your Spotify data:</p>
-            <p class="session-id">Session: ${sessionId.substring(0, 16)}...</p>
-            <a href="${authUrl}" class="auth-btn">Authorize Spotify Access</a>
-            <div class="info">
-              <h3>Required Permissions:</h3>
-              <ul style="text-align: left;">
-                <li>Read your private playlists</li>
-                <li>Read your collaborative playlists</li>
-                <li>Access your profile information</li>
-                <li>View your top tracks and artists</li>
-                <li>Modify your playlists</li>
-              </ul>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
+    // Use APP_DOMAIN env var if set (e.g., "dreamer.com"), otherwise fall back to redirect URI hostname
+    const appDomain = process.env.APP_DOMAIN || new URL(this.redirectUri).hostname;
+    const appName = process.env.APP_NAME || 'Spotimy';
+    
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connect to Spotify · \${appName}</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #fafafa;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 30px rgba(0,0,0,0.05);
+      max-width: 400px;
+      width: 100%;
+      overflow: hidden;
+    }
+    
+    .header {
+      padding: 32px 32px 24px;
+      text-align: center;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .logos {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    
+    .logo-circle {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .logo-spotimy {
+      background: linear-gradient(135deg, #1db954 0%, #1ed760 100%);
+      box-shadow: 0 2px 8px rgba(29, 185, 84, 0.3);
+    }
+    
+    .logo-spotimy svg { width: 24px; height: 24px; fill: white; }
+    
+    .logo-spotify {
+      background: #000;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+    
+    .logo-spotify svg { width: 26px; height: 26px; fill: #1db954; }
+    
+    .arrow { color: #ccc; font-size: 18px; }
+    
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 6px;
+    }
+    
+    .subtitle {
+      font-size: 14px;
+      color: #666;
+    }
+    
+    .domain-badge {
+      display: inline-block;
+      background: #e8f5e9;
+      color: #2e7d32;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      margin-top: 12px;
+    }
+    
+    .permissions {
+      padding: 24px 32px;
+    }
+    
+    .permissions-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      margin-bottom: 16px;
+    }
+    
+    .permission {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      font-size: 14px;
+      color: #333;
+    }
+    
+    .permission:not(:last-child) {
+      border-bottom: 1px solid #f5f5f5;
+    }
+    
+    .permission-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: #f5f5f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    
+    .actions {
+      padding: 24px 32px;
+      background: #fafafa;
+      border-top: 1px solid #f0f0f0;
+    }
+    
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px 20px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 500;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border: none;
+    }
+    
+    .btn-primary {
+      background: #1db954;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #1ed760;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(29, 185, 84, 0.3);
+    }
+    
+    .footer {
+      padding: 16px 32px 24px;
+      background: #fafafa;
+      text-align: center;
+    }
+    
+    .session-id {
+      font-size: 11px;
+      color: #999;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+    }
+    
+    .cancel-link {
+      display: block;
+      margin-top: 12px;
+      font-size: 13px;
+      color: #888;
+      text-decoration: none;
+    }
+    
+    .cancel-link:hover {
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="logos">
+        <div class="logo-circle logo-spotimy">
+          <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+        </div>
+        <span class="arrow">→</span>
+        <div class="logo-circle logo-spotify">
+          <svg viewBox="0 0 24 24"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+        </div>
+      </div>
+      <h1>Connect to Spotify</h1>
+      <p class="subtitle">Grant access to your Spotify account</p>
+      <div class="domain-badge">🔒 ${appDomain}</div>
+    </div>
+    
+    <div class="permissions">
+      <div class="permissions-label">This will allow ${appName} to</div>
+      <div class="permission">
+        <div class="permission-icon">📋</div>
+        <span>View and manage your playlists</span>
+      </div>
+      <div class="permission">
+        <div class="permission-icon">👤</div>
+        <span>Access your profile information</span>
+      </div>
+      <div class="permission">
+        <div class="permission-icon">🎵</div>
+        <span>See your top tracks and artists</span>
+      </div>
+      <div class="permission">
+        <div class="permission-icon">▶️</div>
+        <span>Control playback on your devices</span>
+      </div>
+    </div>
+    
+    <div class="actions">
+      <a href="${authUrl}" class="btn btn-primary">Connect with Spotify</a>
+    </div>
+    
+    <div class="footer">
+      <span class="session-id">Session ${sessionId.substring(0, 8)}</span>
+      <a href="javascript:window.close()" class="cancel-link">Cancel</a>
+    </div>
+  </div>
+</body>
+</html>`;
   }
 
   /**

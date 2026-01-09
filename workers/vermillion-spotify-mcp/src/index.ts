@@ -21,6 +21,9 @@ interface SpotifyEnv {
   SPOTIFY_CLIENT_ID: string;
   SPOTIFY_CLIENT_SECRET: string;
   WORKER_URL?: string;
+  // Application branding (from wrangler.jsonc vars)
+  APP_DOMAIN?: string;
+  APP_NAME?: string;
   // Durable Object binding (from wrangler.jsonc)
   SPOTIFY_MCP: DurableObjectNamespace<SpotifyMcpContainer>;
 }
@@ -66,6 +69,9 @@ export class SpotifyMcpContainer extends Container<SpotifyEnv> {
       LOG_LEVEL: "info",
       ...(ngrokDomain && { NGROK_DOMAIN: ngrokDomain }),
       ...(redirectUri && { SPOTIFY_REDIRECT_URI: redirectUri }),
+      // Application branding for OAuth consent screen
+      ...(env.APP_DOMAIN && { APP_DOMAIN: env.APP_DOMAIN }),
+      ...(env.APP_NAME && { APP_NAME: env.APP_NAME }),
     };
     
     console.log("SpotifyMcpContainer initialized with envVars:", Object.keys(this.envVars));

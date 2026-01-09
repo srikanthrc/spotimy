@@ -19,6 +19,7 @@ import { AudiobooksHandler } from './handlers/audiobooks.js';
 import { ShowsHandler } from './handlers/shows.js';
 import { PlaylistsHandler } from './handlers/playlists.js';
 import { SearchHandler } from './handlers/search.js';
+import { PlayerHandler } from './handlers/player.js';
 
 import {
   ArtistArgs,
@@ -42,6 +43,20 @@ import { AudiobookArgs, MultipleAudiobooksArgs, AudiobookChaptersArgs } from './
 import { ShowArgs, ShowEpisodesArgs } from './types/shows.js';
 import { PlaylistArgs, PlaylistTracksArgs, PlaylistItemsArgs, ModifyPlaylistArgs, AddTracksToPlaylistArgs, RemoveTracksFromPlaylistArgs, GetCurrentUserPlaylistsArgs, CreatePlaylistArgs } from './types/playlists.js';
 import { SearchArgs as SearchArgsType } from './types/search.js';
+import {
+  GetPlaybackStateArgs,
+  TransferPlaybackArgs,
+  StartPlaybackArgs,
+  PausePlaybackArgs,
+  SkipToNextArgs,
+  SkipToPreviousArgs,
+  SeekToPositionArgs,
+  SetRepeatModeArgs,
+  SetVolumeArgs,
+  SetShuffleArgs,
+  GetRecentlyPlayedArgs,
+  AddToQueueArgs,
+} from './types/player.js';
 
 class SpotifyServer {
   private validateArgs<T>(args: Record<string, unknown> | undefined, requiredFields: string[]): T {
@@ -74,6 +89,7 @@ class SpotifyServer {
   private audiobooksHandler: AudiobooksHandler;
   private showsHandler: ShowsHandler;
   private playlistsHandler: PlaylistsHandler;
+  private playerHandler: PlayerHandler;
 
   constructor() {
     this.server = new Server(
@@ -97,6 +113,7 @@ class SpotifyServer {
     this.audiobooksHandler = new AudiobooksHandler(this.api);
     this.showsHandler = new ShowsHandler(this.api);
     this.playlistsHandler = new PlaylistsHandler(this.api);
+    this.playerHandler = new PlayerHandler(this.api);
 
     this.setupToolHandlers();
     
@@ -745,6 +762,250 @@ class SpotifyServer {
             },
             required: ['name']
           },
+        },
+        // Player/Playback control tools
+        {
+          name: 'get_playback_state',
+          description: 'Get information about the user\'s current playback state, including track, progress, and active device',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              market: {
+                type: 'string',
+                description: 'Optional. An ISO 3166-1 alpha-2 country code for content availability'
+              }
+            },
+            required: []
+          }
+        },
+        {
+          name: 'get_available_devices',
+          description: 'Get information about the user\'s available Spotify Connect devices',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        },
+        {
+          name: 'get_currently_playing',
+          description: 'Get the currently playing track or episode',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              market: {
+                type: 'string',
+                description: 'Optional. An ISO 3166-1 alpha-2 country code'
+              }
+            },
+            required: []
+          }
+        },
+        {
+          name: 'transfer_playback',
+          description: 'Transfer playback to a new device and optionally start playing',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_ids: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Array containing the ID of the device to transfer to (only one device supported)'
+              },
+              play: {
+                type: 'boolean',
+                description: 'Optional. If true, playback will start on the new device'
+              }
+            },
+            required: ['device_ids']
+          }
+        },
+        {
+          name: 'start_playback',
+          description: 'Start or resume playback on the user\'s active device',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to start playback on'
+              },
+              context_uri: {
+                type: 'string',
+                description: 'Optional. Spotify URI of album, artist, or playlist to play'
+              },
+              uris: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional. Array of Spotify track URIs to play'
+              },
+              position_ms: {
+                type: 'number',
+                description: 'Optional. Position in milliseconds to start playback'
+              }
+            },
+            required: []
+          }
+        },
+        {
+          name: 'pause_playback',
+          description: 'Pause playback on the user\'s active device',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to pause playback on'
+              }
+            },
+            required: []
+          }
+        },
+        {
+          name: 'skip_to_next',
+          description: 'Skip to the next track in the user\'s queue',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to skip on'
+              }
+            },
+            required: []
+          }
+        },
+        {
+          name: 'skip_to_previous',
+          description: 'Skip to the previous track in the user\'s queue',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to skip on'
+              }
+            },
+            required: []
+          }
+        },
+        {
+          name: 'seek_to_position',
+          description: 'Seek to a position in the currently playing track',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              position_ms: {
+                type: 'number',
+                description: 'Position in milliseconds to seek to'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to seek on'
+              }
+            },
+            required: ['position_ms']
+          }
+        },
+        {
+          name: 'set_repeat_mode',
+          description: 'Set the repeat mode for playback',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              state: {
+                type: 'string',
+                enum: ['track', 'context', 'off'],
+                description: 'Repeat mode: track (repeat current track), context (repeat album/playlist), off'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to set repeat on'
+              }
+            },
+            required: ['state']
+          }
+        },
+        {
+          name: 'set_volume',
+          description: 'Set the volume for the user\'s current playback device',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              volume_percent: {
+                type: 'number',
+                minimum: 0,
+                maximum: 100,
+                description: 'Volume level (0-100)'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to set volume on'
+              }
+            },
+            required: ['volume_percent']
+          }
+        },
+        {
+          name: 'set_shuffle',
+          description: 'Toggle shuffle on or off for playback',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              state: {
+                type: 'boolean',
+                description: 'true to enable shuffle, false to disable'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to toggle shuffle on'
+              }
+            },
+            required: ['state']
+          }
+        },
+        {
+          name: 'get_recently_played',
+          description: 'Get the user\'s recently played tracks',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              limit: {
+                type: 'number',
+                minimum: 1,
+                maximum: 50,
+                description: 'Maximum number of items to return (1-50, default 20)'
+              }
+            },
+            required: []
+          }
+        },
+        {
+          name: 'get_queue',
+          description: 'Get the user\'s current playback queue',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        },
+        {
+          name: 'add_to_queue',
+          description: 'Add a track or episode to the user\'s playback queue',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uri: {
+                type: 'string',
+                description: 'Spotify URI of the track or episode to add (e.g., spotify:track:4iV5W9uYEdYUVa79Axb7Rh)'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to add to queue on'
+              }
+            },
+            required: ['uri']
+          }
         }
       ],
     }));
@@ -969,6 +1230,125 @@ class SpotifyServer {
           case 'create_playlist': {
             const args = this.validateArgs<CreatePlaylistArgs>(request.params.arguments, ['name']);
             const result = await this.playlistsHandler.createPlaylist(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          // Player/Playback control tools
+          case 'get_playback_state': {
+            const args = this.validateArgs<GetPlaybackStateArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.getPlaybackState(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'get_available_devices': {
+            const result = await this.playerHandler.getAvailableDevices();
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'get_currently_playing': {
+            const args = this.validateArgs<GetPlaybackStateArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.getCurrentlyPlayingTrack(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'transfer_playback': {
+            const args = this.validateArgs<TransferPlaybackArgs>(request.params.arguments, ['device_ids']);
+            const result = await this.playerHandler.transferPlayback(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'start_playback': {
+            const args = this.validateArgs<StartPlaybackArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.startPlayback(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'pause_playback': {
+            const args = this.validateArgs<PausePlaybackArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.pausePlayback(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'skip_to_next': {
+            const args = this.validateArgs<SkipToNextArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.skipToNext(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'skip_to_previous': {
+            const args = this.validateArgs<SkipToPreviousArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.skipToPrevious(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'seek_to_position': {
+            const args = this.validateArgs<SeekToPositionArgs>(request.params.arguments, ['position_ms']);
+            const result = await this.playerHandler.seekToPosition(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'set_repeat_mode': {
+            const args = this.validateArgs<SetRepeatModeArgs>(request.params.arguments, ['state']);
+            const result = await this.playerHandler.setRepeatMode(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'set_volume': {
+            const args = this.validateArgs<SetVolumeArgs>(request.params.arguments, ['volume_percent']);
+            const result = await this.playerHandler.setVolume(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'set_shuffle': {
+            const args = this.validateArgs<SetShuffleArgs>(request.params.arguments, ['state']);
+            const result = await this.playerHandler.setShuffle(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'get_recently_played': {
+            const args = this.validateArgs<GetRecentlyPlayedArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.getRecentlyPlayed(args);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'get_queue': {
+            const result = await this.playerHandler.getQueue();
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+            };
+          }
+
+          case 'add_to_queue': {
+            const args = this.validateArgs<AddToQueueArgs>(request.params.arguments, ['uri']);
+            const result = await this.playerHandler.addToQueue(args);
             return {
               content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
             };

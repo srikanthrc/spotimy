@@ -25,6 +25,10 @@ services:
       # Ngrok configuration
       - NGROK_AUTH_TOKEN=${NGROK_AUTH_TOKEN:-}
       - NGROK_DOMAIN=${NGROK_DOMAIN:-}
+
+      # Application branding (for OAuth consent screen)
+      - APP_DOMAIN=${APP_DOMAIN:-}
+      - APP_NAME=${APP_NAME:-}
     volumes:
       # Persist encrypted token database (SQLite)
       - spotimy_data:/app/data

@@ -9,7 +9,10 @@
   // Non-sensitive environment variables (like docker-compose environment:)
   // Secrets (SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET) are set via `wrangler secret put`
   "vars": {
-    "WORKER_URL": "https://vermillion-spotify-mcp.vermillion-a04.workers.dev"
+    "WORKER_URL": "https://vermillion-spotify-mcp.vermillion-a04.workers.dev",
+    // Application branding for OAuth consent screen
+    "APP_DOMAIN": "dreamer.com",
+    "APP_NAME": "Dreamer"
   },
 
   // Container configuration - runs existing Dockerfile

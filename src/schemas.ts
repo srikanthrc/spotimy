@@ -671,5 +671,239 @@ export const outputSchemas: Record<string, any> = {
       uri: { type: 'string' }
     },
     required: ['id', 'name', 'uri']
+  },
+
+  // === Player/Playback Tools ===
+  get_playback_state: {
+    type: 'object',
+    properties: {
+      device: {
+        type: ['object', 'null'],
+        properties: {
+          id: { type: ['string', 'null'] },
+          is_active: { type: 'boolean' },
+          name: { type: 'string' },
+          type: { type: 'string' },
+          volume_percent: { type: ['number', 'null'] }
+        }
+      },
+      repeat_state: { type: 'string' },
+      shuffle_state: { type: 'boolean' },
+      is_playing: { type: 'boolean' },
+      progress_ms: { type: ['number', 'null'] },
+      item: {
+        type: ['object', 'null'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          artists: { type: 'array', items: simpleArtist },
+          album: simpleAlbum,
+          duration_ms: { type: 'number' },
+          uri: { type: 'string' }
+        }
+      },
+      currently_playing_type: { type: 'string' },
+      message: { type: 'string' }  // For "No active playback" case
+    }
+  },
+
+  get_available_devices: {
+    type: 'object',
+    properties: {
+      devices: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: ['string', 'null'] },
+            is_active: { type: 'boolean' },
+            is_private_session: { type: 'boolean' },
+            is_restricted: { type: 'boolean' },
+            name: { type: 'string' },
+            type: { type: 'string' },
+            volume_percent: { type: ['number', 'null'] },
+            supports_volume: { type: 'boolean' }
+          }
+        }
+      }
+    },
+    required: ['devices']
+  },
+
+  get_currently_playing: {
+    type: 'object',
+    properties: {
+      is_playing: { type: 'boolean' },
+      progress_ms: { type: ['number', 'null'] },
+      item: {
+        type: ['object', 'null'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          artists: { type: 'array', items: simpleArtist },
+          album: simpleAlbum,
+          duration_ms: { type: 'number' },
+          uri: { type: 'string' }
+        }
+      },
+      currently_playing_type: { type: 'string' },
+      message: { type: 'string' }  // For "Nothing currently playing" case
+    }
+  },
+
+  transfer_playback: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  start_playback: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  pause_playback: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  skip_to_next: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  skip_to_previous: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  seek_to_position: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  set_repeat_mode: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  set_volume: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  set_shuffle: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
+  },
+
+  get_recently_played: {
+    type: 'object',
+    properties: {
+      href: { type: 'string' },
+      limit: { type: 'number' },
+      next: { type: ['string', 'null'] },
+      cursors: {
+        type: 'object',
+        properties: {
+          after: { type: 'string' },
+          before: { type: 'string' }
+        }
+      },
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            track: simpleTrack,
+            played_at: { type: 'string' },
+            context: {
+              type: ['object', 'null'],
+              properties: {
+                type: { type: 'string' },
+                uri: { type: 'string' }
+              }
+            }
+          }
+        }
+      }
+    },
+    required: ['items']
+  },
+
+  get_queue: {
+    type: 'object',
+    properties: {
+      currently_playing: {
+        type: ['object', 'null'],
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          artists: { type: 'array', items: simpleArtist },
+          album: simpleAlbum,
+          duration_ms: { type: 'number' },
+          uri: { type: 'string' }
+        }
+      },
+      queue: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            artists: { type: 'array', items: simpleArtist },
+            album: simpleAlbum,
+            duration_ms: { type: 'number' },
+            uri: { type: 'string' }
+          }
+        }
+      }
+    },
+    required: ['queue']
+  },
+
+  add_to_queue: {
+    type: 'object',
+    properties: {
+      success: { type: 'boolean' },
+      message: { type: 'string' }
+    },
+    required: ['success', 'message']
   }
 };

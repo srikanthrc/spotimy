@@ -25,6 +25,7 @@ import { AudiobooksHandler } from './handlers/audiobooks.js';
 import { ShowsHandler } from './handlers/shows.js';
 import { PlaylistsHandler } from './handlers/playlists.js';
 import { SearchHandler } from './handlers/search.js';
+import { PlayerHandler } from './handlers/player.js';
 
 import {
   ArtistArgs,
@@ -48,6 +49,20 @@ import { AudiobookArgs, MultipleAudiobooksArgs, AudiobookChaptersArgs } from './
 import { ShowArgs, ShowEpisodesArgs } from './types/shows.js';
 import { PlaylistArgs, PlaylistTracksArgs, PlaylistItemsArgs, ModifyPlaylistArgs, AddTracksToPlaylistArgs, RemoveTracksFromPlaylistArgs, GetCurrentUserPlaylistsArgs, CreatePlaylistArgs } from './types/playlists.js';
 import { SearchArgs as SearchArgsType } from './types/search.js';
+import {
+  GetPlaybackStateArgs,
+  TransferPlaybackArgs,
+  StartPlaybackArgs,
+  PausePlaybackArgs,
+  SkipToNextArgs,
+  SkipToPreviousArgs,
+  SeekToPositionArgs,
+  SetRepeatModeArgs,
+  SetVolumeArgs,
+  SetShuffleArgs,
+  GetRecentlyPlayedArgs,
+  AddToQueueArgs,
+} from './types/player.js';
 
 class SpotifyHttpServer {
   // Cache auth status for 5 seconds to reduce DB lookups during rapid reconnection attempts
@@ -61,7 +76,11 @@ class SpotifyHttpServer {
     'user-read-private',
     'user-top-read',
     'playlist-modify-public',
-    'playlist-modify-private'
+    'playlist-modify-private',
+    'user-read-playback-state',
+    'user-modify-playback-state',
+    'user-read-currently-playing',
+    'user-read-recently-played'
   ];
   private readonly REQUIRED_SCOPES = this.REQUIRED_SCOPES_ARRAY.join(' ');
 
@@ -181,6 +200,7 @@ class SpotifyHttpServer {
   private audiobooksHandler: AudiobooksHandler;
   private showsHandler: ShowsHandler;
   private playlistsHandler: PlaylistsHandler;
+  private playerHandler: PlayerHandler;
   private httpServer!: ReturnType<typeof createServer>;
   private transports = new Map<string, SSEServerTransport>();
   private sessionIdMapping = new Map<string, string>(); // Maps transport sessionId -> custom sessionId
@@ -211,6 +231,7 @@ class SpotifyHttpServer {
     this.audiobooksHandler = new AudiobooksHandler(this.api);
     this.showsHandler = new ShowsHandler(this.api);
     this.playlistsHandler = new PlaylistsHandler(this.api);
+    this.playerHandler = new PlayerHandler(this.api);
 
     this.setupToolHandlers();
     this.setupHttpServer();
@@ -924,6 +945,265 @@ class SpotifyHttpServer {
             required: ['name']
           },
           outputSchema: outputSchemas.create_playlist
+        },
+        // Player/Playback control tools
+        {
+          name: 'get_playback_state',
+          description: 'Get information about the user\'s current playback state, including track, progress, and active device',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              market: {
+                type: 'string',
+                description: 'Optional. An ISO 3166-1 alpha-2 country code for content availability'
+              }
+            },
+            required: []
+          },
+          outputSchema: outputSchemas.get_playback_state
+        },
+        {
+          name: 'get_available_devices',
+          description: 'Get information about the user\'s available Spotify Connect devices',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            required: []
+          },
+          outputSchema: outputSchemas.get_available_devices
+        },
+        {
+          name: 'get_currently_playing',
+          description: 'Get the currently playing track or episode',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              market: {
+                type: 'string',
+                description: 'Optional. An ISO 3166-1 alpha-2 country code'
+              }
+            },
+            required: []
+          },
+          outputSchema: outputSchemas.get_currently_playing
+        },
+        {
+          name: 'transfer_playback',
+          description: 'Transfer playback to a new device and optionally start playing',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_ids: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Array containing the ID of the device to transfer to (only one device supported)'
+              },
+              play: {
+                type: 'boolean',
+                description: 'Optional. If true, playback will start on the new device'
+              }
+            },
+            required: ['device_ids']
+          },
+          outputSchema: outputSchemas.transfer_playback
+        },
+        {
+          name: 'start_playback',
+          description: 'Start or resume playback on the user\'s active device',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to start playback on'
+              },
+              context_uri: {
+                type: 'string',
+                description: 'Optional. Spotify URI of album, artist, or playlist to play'
+              },
+              uris: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional. Array of Spotify track URIs to play'
+              },
+              position_ms: {
+                type: 'number',
+                description: 'Optional. Position in milliseconds to start playback'
+              }
+            },
+            required: []
+          },
+          outputSchema: outputSchemas.start_playback
+        },
+        {
+          name: 'pause_playback',
+          description: 'Pause playback on the user\'s active device',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to pause playback on'
+              }
+            },
+            required: []
+          },
+          outputSchema: outputSchemas.pause_playback
+        },
+        {
+          name: 'skip_to_next',
+          description: 'Skip to the next track in the user\'s queue',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to skip on'
+              }
+            },
+            required: []
+          },
+          outputSchema: outputSchemas.skip_to_next
+        },
+        {
+          name: 'skip_to_previous',
+          description: 'Skip to the previous track in the user\'s queue',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to skip on'
+              }
+            },
+            required: []
+          },
+          outputSchema: outputSchemas.skip_to_previous
+        },
+        {
+          name: 'seek_to_position',
+          description: 'Seek to a position in the currently playing track',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              position_ms: {
+                type: 'number',
+                description: 'Position in milliseconds to seek to'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to seek on'
+              }
+            },
+            required: ['position_ms']
+          },
+          outputSchema: outputSchemas.seek_to_position
+        },
+        {
+          name: 'set_repeat_mode',
+          description: 'Set the repeat mode for playback',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              state: {
+                type: 'string',
+                enum: ['track', 'context', 'off'],
+                description: 'Repeat mode: track (repeat current track), context (repeat album/playlist), off'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to set repeat on'
+              }
+            },
+            required: ['state']
+          },
+          outputSchema: outputSchemas.set_repeat_mode
+        },
+        {
+          name: 'set_volume',
+          description: 'Set the volume for the user\'s current playback device',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              volume_percent: {
+                type: 'number',
+                minimum: 0,
+                maximum: 100,
+                description: 'Volume level (0-100)'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to set volume on'
+              }
+            },
+            required: ['volume_percent']
+          },
+          outputSchema: outputSchemas.set_volume
+        },
+        {
+          name: 'set_shuffle',
+          description: 'Toggle shuffle on or off for playback',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              state: {
+                type: 'boolean',
+                description: 'true to enable shuffle, false to disable'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to toggle shuffle on'
+              }
+            },
+            required: ['state']
+          },
+          outputSchema: outputSchemas.set_shuffle
+        },
+        {
+          name: 'get_recently_played',
+          description: 'Get the user\'s recently played tracks',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              limit: {
+                type: 'number',
+                minimum: 1,
+                maximum: 50,
+                description: 'Maximum number of items to return (1-50, default 20)'
+              }
+            },
+            required: []
+          },
+          outputSchema: outputSchemas.get_recently_played
+        },
+        {
+          name: 'get_queue',
+          description: 'Get the user\'s current playback queue',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            required: []
+          },
+          outputSchema: outputSchemas.get_queue
+        },
+        {
+          name: 'add_to_queue',
+          description: 'Add a track or episode to the user\'s playback queue',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              uri: {
+                type: 'string',
+                description: 'Spotify URI of the track or episode to add (e.g., spotify:track:4iV5W9uYEdYUVa79Axb7Rh)'
+              },
+              device_id: {
+                type: 'string',
+                description: 'Optional. The device ID to add to queue on'
+              }
+            },
+            required: ['uri']
+          },
+          outputSchema: outputSchemas.add_to_queue
         }
       ] as any; // Type assertion to preserve outputSchema fields
       return {
@@ -1126,6 +1406,95 @@ class SpotifyHttpServer {
             const args = this.validateArgs<CreatePlaylistArgs>(request.params.arguments, ['name']);
             const result = await this.playlistsHandler.createPlaylist(args);
             return formatToolResponse(result, 'create_playlist');
+          }
+
+          // Player/Playback control tools
+          case 'get_playback_state': {
+            const args = this.validateArgs<GetPlaybackStateArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.getPlaybackState(args);
+            return formatToolResponse(result, 'get_playback_state');
+          }
+
+          case 'get_available_devices': {
+            const result = await this.playerHandler.getAvailableDevices();
+            return formatToolResponse(result, 'get_available_devices');
+          }
+
+          case 'get_currently_playing': {
+            const args = this.validateArgs<GetPlaybackStateArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.getCurrentlyPlayingTrack(args);
+            return formatToolResponse(result, 'get_currently_playing');
+          }
+
+          case 'transfer_playback': {
+            const args = this.validateArgs<TransferPlaybackArgs>(request.params.arguments, ['device_ids']);
+            const result = await this.playerHandler.transferPlayback(args);
+            return formatToolResponse(result, 'transfer_playback');
+          }
+
+          case 'start_playback': {
+            const args = this.validateArgs<StartPlaybackArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.startPlayback(args);
+            return formatToolResponse(result, 'start_playback');
+          }
+
+          case 'pause_playback': {
+            const args = this.validateArgs<PausePlaybackArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.pausePlayback(args);
+            return formatToolResponse(result, 'pause_playback');
+          }
+
+          case 'skip_to_next': {
+            const args = this.validateArgs<SkipToNextArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.skipToNext(args);
+            return formatToolResponse(result, 'skip_to_next');
+          }
+
+          case 'skip_to_previous': {
+            const args = this.validateArgs<SkipToPreviousArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.skipToPrevious(args);
+            return formatToolResponse(result, 'skip_to_previous');
+          }
+
+          case 'seek_to_position': {
+            const args = this.validateArgs<SeekToPositionArgs>(request.params.arguments, ['position_ms']);
+            const result = await this.playerHandler.seekToPosition(args);
+            return formatToolResponse(result, 'seek_to_position');
+          }
+
+          case 'set_repeat_mode': {
+            const args = this.validateArgs<SetRepeatModeArgs>(request.params.arguments, ['state']);
+            const result = await this.playerHandler.setRepeatMode(args);
+            return formatToolResponse(result, 'set_repeat_mode');
+          }
+
+          case 'set_volume': {
+            const args = this.validateArgs<SetVolumeArgs>(request.params.arguments, ['volume_percent']);
+            const result = await this.playerHandler.setVolume(args);
+            return formatToolResponse(result, 'set_volume');
+          }
+
+          case 'set_shuffle': {
+            const args = this.validateArgs<SetShuffleArgs>(request.params.arguments, ['state']);
+            const result = await this.playerHandler.setShuffle(args);
+            return formatToolResponse(result, 'set_shuffle');
+          }
+
+          case 'get_recently_played': {
+            const args = this.validateArgs<GetRecentlyPlayedArgs>(request.params.arguments || {}, []);
+            const result = await this.playerHandler.getRecentlyPlayed(args);
+            return formatToolResponse(result, 'get_recently_played');
+          }
+
+          case 'get_queue': {
+            const result = await this.playerHandler.getQueue();
+            return formatToolResponse(result, 'get_queue');
+          }
+
+          case 'add_to_queue': {
+            const args = this.validateArgs<AddToQueueArgs>(request.params.arguments, ['uri']);
+            const result = await this.playerHandler.addToQueue(args);
+            return formatToolResponse(result, 'add_to_queue');
           }
 
           default:
@@ -1351,19 +1720,60 @@ class SpotifyHttpServer {
 
             // No valid parameters provided
             res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(`
-              <html>
-                <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
-                  <h1>❌ Missing Parameters</h1>
-                  <p>Please provide either:</p>
-                  <ul style="text-align: left; max-width: 400px; margin: 20px auto;">
-                    <li><strong>Legacy:</strong> sessionId query parameter</li>
-                    <li><strong>OAuth 2.0:</strong> client_id, redirect_uri, and state parameters</li>
-                  </ul>
-                  <p style="color: #999;">Example: /auth?client_id=...&redirect_uri=...&state=...</p>
-                </body>
-              </html>
-            `);
+            res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Missing Parameters · Spotimy</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #fafafa; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    .card {
+      background: white; border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 30px rgba(0,0,0,0.05);
+      max-width: 440px; width: 100%; padding: 48px 32px;
+    }
+    .error-icon {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: #fef3c7; display: flex; align-items: center;
+      justify-content: center; margin: 0 auto 24px; font-size: 28px;
+    }
+    h1 { font-size: 22px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; text-align: center; }
+    .message { font-size: 14px; color: #666; margin-bottom: 24px; text-align: center; line-height: 1.5; }
+    .options { background: #f5f5f5; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; }
+    .option { margin-bottom: 12px; }
+    .option:last-child { margin-bottom: 0; }
+    .option-label { font-size: 12px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .option-value { font-size: 13px; color: #333; font-family: 'SF Mono', Monaco, Consolas, monospace; }
+    .example { font-size: 12px; color: #999; text-align: center; }
+    code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="error-icon">⚠</div>
+    <h1>Missing Parameters</h1>
+    <p class="message">Please provide the required authorization parameters</p>
+    <div class="options">
+      <div class="option">
+        <div class="option-label">Session-based</div>
+        <div class="option-value">sessionId</div>
+      </div>
+      <div class="option">
+        <div class="option-label">OAuth 2.0</div>
+        <div class="option-value">client_id, redirect_uri, state</div>
+      </div>
+    </div>
+    <p class="example">Example: <code>/auth?sessionId=your-session-id</code></p>
+  </div>
+</body>
+</html>`);
           } else {
             res.writeHead(405, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Method not allowed. Use GET.' }));
@@ -1380,27 +1790,127 @@ class SpotifyHttpServer {
 
             if (error) {
               res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-              res.end(`
-                <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
-                    <h1 style="color: #e22134;">❌ Authorization Error</h1>
-                    <p>Error: ${error}</p>
-                  </body>
-                </html>
-              `);
+              res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authorization Error · Spotimy</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #fafafa;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 30px rgba(0,0,0,0.05);
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+      padding: 48px 32px;
+    }
+    .error-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #e53935 0%, #ef5350 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      font-size: 28px;
+    }
+    h1 { font-size: 22px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; }
+    .message { font-size: 14px; color: #666; margin-bottom: 24px; }
+    .error-code {
+      background: #fef2f2;
+      color: #dc2626;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      display: inline-block;
+      margin-bottom: 24px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 12px 24px;
+      background: #1db954;
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .btn:hover { background: #1ed760; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="error-icon">✕</div>
+    <h1>Authorization Failed</h1>
+    <p class="message">Spotify denied the authorization request</p>
+    <div class="error-code">${error}</div>
+    <br><a href="/auth" class="btn">Try Again</a>
+  </div>
+</body>
+</html>`);
               return;
             }
 
             if (!code || !state) {
               res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-              res.end(`
-                <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
-                    <h1>❌ Invalid Callback</h1>
-                    <p>Missing authorization code or state parameter.</p>
-                  </body>
-                </html>
-              `);
+              res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invalid Request · Spotimy</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #fafafa; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    .card {
+      background: white; border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 30px rgba(0,0,0,0.05);
+      max-width: 400px; width: 100%; text-align: center; padding: 48px 32px;
+    }
+    .error-icon {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: #fef3c7; display: flex; align-items: center;
+      justify-content: center; margin: 0 auto 24px; font-size: 28px;
+    }
+    h1 { font-size: 22px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; }
+    .message { font-size: 14px; color: #666; margin-bottom: 24px; line-height: 1.5; }
+    .btn {
+      display: inline-block; padding: 12px 24px; background: #1db954;
+      color: white; text-decoration: none; border-radius: 8px;
+      font-size: 14px; font-weight: 500;
+    }
+    .btn:hover { background: #1ed760; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="error-icon">⚠</div>
+    <h1>Invalid Callback</h1>
+    <p class="message">Missing authorization code or state parameter.<br>Please start the authorization flow again.</p>
+    <a href="/auth" class="btn">Start Over</a>
+  </div>
+</body>
+</html>`);
               return;
             }
 
@@ -1439,38 +1949,154 @@ class SpotifyHttpServer {
                 return;
               }
 
-              // Legacy flow: show success page
+              // Legacy flow: show success page (clean, minimal design)
               res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-              res.end(`
-                <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
-                    <h1 style="color: #1db954;">✅ Authorization Successful!</h1>
-                    <p>Your Spotify account has been linked to this session.</p>
-                    <p>You can now close this window and use the MCP server.</p>
-                    <div style="background: #282828; padding: 20px; border-radius: 10px; margin: 20px 0;">
-                      <p><strong>Session ID:</strong> ${tokenResult.sessionId.substring(0, 16)}...</p>
-                      <p><strong>User ID:</strong> ${tokenResult.userId}</p>
-                      <p><strong>Expires in:</strong> ${Math.floor(tokenResult.expiresIn / 60)} minutes</p>
-                    </div>
-                    <p style="margin-top: 20px;">
-                      <a href="/health?sessionId=${tokenResult.sessionId}" style="background: #1db954; color: white; padding: 12px 24px; text-decoration: none; border-radius: 25px; font-weight: bold;">Check Session Status</a>
-                    </p>
-                  </body>
-                </html>
-              `);
+              res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connected · Spotimy</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #fafafa;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 30px rgba(0,0,0,0.05);
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+      padding: 48px 32px;
+    }
+    .success-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #1db954 0%, #1ed760 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+      box-shadow: 0 4px 16px rgba(29, 185, 84, 0.3);
+    }
+    .success-icon svg {
+      width: 32px;
+      height: 32px;
+      fill: white;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: #1a1a1a;
+      margin-bottom: 8px;
+    }
+    .message {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 32px;
+      line-height: 1.5;
+    }
+    .user-info {
+      background: #f5f5f5;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+    .user-name {
+      font-size: 15px;
+      font-weight: 500;
+      color: #333;
+    }
+    .session-id {
+      font-size: 11px;
+      color: #999;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      margin-top: 6px;
+    }
+    .close-hint {
+      font-size: 13px;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="success-icon">
+      <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+    </div>
+    <h1>Connected to Spotify</h1>
+    <p class="message">Your account has been linked successfully.<br>You can now use Spotimy with your Spotify data.</p>
+    <div class="user-info">
+      <div class="user-name">${tokenResult.userId}</div>
+      <div class="session-id">Session ${tokenResult.sessionId.substring(0, 8)}</div>
+    </div>
+    <p class="close-hint">You can close this window</p>
+  </div>
+</body>
+</html>`);
 
             } catch (error) {
               res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
-              res.end(`
-                <html>
-                  <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #191414; color: white;">
-                    <h1 style="color: #e22134;">❌ Token Exchange Error</h1>
-                    <p>Failed to exchange authorization code for access token.</p>
-                    <p style="color: #999;">Error: ${error instanceof Error ? error.message : String(error)}</p>
-                    <p><a href="/auth" style="color: #1db954;">Try again</a></p>
-                  </body>
-                </html>
-              `);
+              res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connection Error · Spotimy</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #fafafa; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center; padding: 20px;
+    }
+    .card {
+      background: white; border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 30px rgba(0,0,0,0.05);
+      max-width: 400px; width: 100%; text-align: center; padding: 48px 32px;
+    }
+    .error-icon {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: linear-gradient(135deg, #e53935 0%, #ef5350 100%);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 24px; font-size: 28px;
+    }
+    h1 { font-size: 22px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; }
+    .message { font-size: 14px; color: #666; margin-bottom: 16px; line-height: 1.5; }
+    .error-detail {
+      background: #f5f5f5; color: #666; padding: 12px 16px; border-radius: 6px;
+      font-size: 12px; font-family: 'SF Mono', Monaco, Consolas, monospace;
+      margin-bottom: 24px; word-break: break-word; text-align: left;
+    }
+    .btn {
+      display: inline-block; padding: 12px 24px; background: #1db954;
+      color: white; text-decoration: none; border-radius: 8px;
+      font-size: 14px; font-weight: 500;
+    }
+    .btn:hover { background: #1ed760; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="error-icon">✕</div>
+    <h1>Connection Failed</h1>
+    <p class="message">Unable to complete the authorization</p>
+    <div class="error-detail">${error instanceof Error ? error.message : String(error)}</div>
+    <a href="/auth" class="btn">Try Again</a>
+  </div>
+</body>
+</html>`);
             }
           } else {
             res.writeHead(405, { 'Content-Type': 'application/json' });

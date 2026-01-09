@@ -456,7 +456,7 @@ For production deployment on Google Cloud Platform, see [GCP_DEPLOYMENT.md](./GC
 
 ```
 src/
-├── handlers/          # Domain-specific API handlers
+├── handlers/         # Domain-specific API handlers
 ├── types/            # TypeScript interfaces
 ├── utils/            # Utilities (auth, api, logger, token-store, client-registration)
 ├── http-server.ts    # HTTP transport server (primary)
