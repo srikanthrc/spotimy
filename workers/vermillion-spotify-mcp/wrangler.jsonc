@@ -44,5 +44,10 @@
 
   "observability": {
     "enabled": true
+  },
+
+  // Cron trigger to keep container warm (every 5 minutes)
+  "triggers": {
+    "crons": ["*/5 * * * *"]
   }
 }

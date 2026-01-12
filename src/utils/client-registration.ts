@@ -1,4 +1,3 @@
-import { Database } from 'bun:sqlite';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -8,6 +7,7 @@ import {
   ClientRegistrationResponse,
   RegisteredClient,
 } from '../types/oauth.js';
+import { createDbAdapter, type DbAdapter } from './db-adapter.js';
 
 /**
  * Manages OAuth 2.0 dynamic client registration (RFC 7591)
@@ -17,21 +17,21 @@ import {
  * pre-configured Spotify app credentials for actual OAuth flows.
  */
 export class ClientRegistrationManager {
-  private db: Database;
+  private db: DbAdapter;
 
   constructor(dbPath?: string) {
-    const defaultPath = path.join(process.cwd(), 'data', 'clients.db');
-    const finalPath = dbPath || defaultPath;
+    // Extract data directory from path, or use default
+    const dataDir = dbPath ? path.dirname(dbPath) : path.join(process.cwd(), 'data');
 
-    // Ensure directory exists
-    const dir = path.dirname(finalPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    // Ensure directory exists (for local deployments)
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    this.db = new Database(finalPath);
+    // Initialize database adapter (auto-selects based on environment)
+    this.db = createDbAdapter('clients', dataDir);
     this.initDatabase();
-    logger.info({ dbPath: finalPath }, 'Client Registration Manager initialized');
+    logger.info({ dataDir, dbType: this.db.type }, 'Client Registration Manager initialized');
   }
 
   private initDatabase() {
@@ -72,15 +72,13 @@ export class ClientRegistrationManager {
     const scope = request.scope;
 
     // Store the registered client
-    const stmt = this.db.query(`
+    this.db.run(`
       INSERT INTO registered_clients (
         client_id, client_secret, client_name, redirect_uris,
         grant_types, response_types, token_endpoint_auth_method,
         scope, created_at, registration_access_token
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    stmt.run(
+    `, [
       clientId,
       clientSecret,
       request.client_name || null,
@@ -91,7 +89,7 @@ export class ClientRegistrationManager {
       scope || null,
       createdAt,
       registrationAccessToken
-    );
+    ]);
 
     logger.info({
       clientId,
@@ -127,11 +125,11 @@ export class ClientRegistrationManager {
    * Get a registered client by client_id
    */
   getClient(clientId: string): RegisteredClient | null {
-    const stmt = this.db.query(`
-      SELECT * FROM registered_clients WHERE client_id = ?
-    `);
+    const row = this.db.get<Record<string, unknown>>(
+      `SELECT * FROM registered_clients WHERE client_id = ?`,
+      [clientId]
+    );
 
-    const row = stmt.get(clientId) as any;
     if (!row) {
       logger.debug({ clientId }, 'Client lookup returned no results');
       return null;
@@ -144,16 +142,16 @@ export class ClientRegistrationManager {
     }, 'Client found in database');
 
     return {
-      client_id: row.client_id,
-      client_secret: row.client_secret,
-      client_name: row.client_name,
-      redirect_uris: JSON.parse(row.redirect_uris),
-      grant_types: JSON.parse(row.grant_types),
-      response_types: JSON.parse(row.response_types),
-      token_endpoint_auth_method: row.token_endpoint_auth_method,
-      scope: row.scope,
-      created_at: row.created_at,
-      registration_access_token: row.registration_access_token,
+      client_id: row.client_id as string,
+      client_secret: row.client_secret as string,
+      client_name: row.client_name as string | undefined,
+      redirect_uris: JSON.parse(row.redirect_uris as string),
+      grant_types: JSON.parse(row.grant_types as string),
+      response_types: JSON.parse(row.response_types as string),
+      token_endpoint_auth_method: row.token_endpoint_auth_method as string,
+      scope: row.scope as string | undefined,
+      created_at: row.created_at as number,
+      registration_access_token: row.registration_access_token as string | undefined,
     };
   }
 
@@ -186,36 +184,34 @@ export class ClientRegistrationManager {
    * Delete a registered client
    */
   deleteClient(clientId: string): boolean {
-    const stmt = this.db.query(`
-      DELETE FROM registered_clients WHERE client_id = ?
-    `);
+    const result = this.db.run(
+      `DELETE FROM registered_clients WHERE client_id = ?`,
+      [clientId]
+    );
 
-    stmt.run(clientId);
-    const changes = this.db.query('SELECT changes() as changes').get() as { changes: number };
-    logger.info({ clientId, deleted: changes.changes > 0 }, 'Client deletion attempt');
-    return changes.changes > 0;
+    logger.info({ clientId, deleted: result.changes > 0 }, 'Client deletion attempt');
+    return result.changes > 0;
   }
 
   /**
    * Get all registered clients (for admin purposes)
    */
   getAllClients(): RegisteredClient[] {
-    const stmt = this.db.query(`
-      SELECT * FROM registered_clients ORDER BY created_at DESC
-    `);
+    const rows = this.db.all<Record<string, unknown>>(
+      `SELECT * FROM registered_clients ORDER BY created_at DESC`
+    );
 
-    const rows = stmt.all() as any[];
     return rows.map(row => ({
-      client_id: row.client_id,
-      client_secret: row.client_secret,
-      client_name: row.client_name,
-      redirect_uris: JSON.parse(row.redirect_uris),
-      grant_types: JSON.parse(row.grant_types),
-      response_types: JSON.parse(row.response_types),
-      token_endpoint_auth_method: row.token_endpoint_auth_method,
-      scope: row.scope,
-      created_at: row.created_at,
-      registration_access_token: row.registration_access_token,
+      client_id: row.client_id as string,
+      client_secret: row.client_secret as string,
+      client_name: row.client_name as string | undefined,
+      redirect_uris: JSON.parse(row.redirect_uris as string),
+      grant_types: JSON.parse(row.grant_types as string),
+      response_types: JSON.parse(row.response_types as string),
+      token_endpoint_auth_method: row.token_endpoint_auth_method as string,
+      scope: row.scope as string | undefined,
+      created_at: row.created_at as number,
+      registration_access_token: row.registration_access_token as string | undefined,
     }));
   }
 
@@ -223,13 +219,12 @@ export class ClientRegistrationManager {
    * Get client registration statistics
    */
   getStats() {
-    const stmt = this.db.query(`
-      SELECT COUNT(*) as total FROM registered_clients
-    `);
+    const result = this.db.get<{ total: number }>(
+      `SELECT COUNT(*) as total FROM registered_clients`
+    );
 
-    const result = stmt.get() as { total: number };
     return {
-      totalClients: result.total,
+      totalClients: result?.total ?? 0,
     };
   }
 

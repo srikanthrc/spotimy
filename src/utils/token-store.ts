@@ -1,8 +1,8 @@
-import { Database } from 'bun:sqlite';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { createDbAdapter, isTursoConfigured, type DbAdapter } from './db-adapter.js';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -33,34 +33,35 @@ export interface SessionInfo {
  * Secure token storage with encryption for multi-user OAuth
  *
  * Features:
- * - SQLite database for persistence
+ * - Pluggable database backend (Bun SQLite or Turso)
  * - AES-256-GCM encryption for sensitive fields
  * - Session-to-user mapping
  * - Automatic token expiry cleanup
  */
 export class TokenStore {
-  private db: Database;
+  private db: DbAdapter;
   private encryptionKey: Buffer;
-  private readonly dbPath: string;
+  private readonly dataDir: string;
   private readonly keyPath: string;
 
   constructor(dataDir: string = './data') {
-    // Ensure data directory exists
+    this.dataDir = dataDir;
+    
+    // Ensure data directory exists (for local key storage)
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    this.dbPath = path.join(dataDir, 'tokens.db');
     this.keyPath = path.join(dataDir, '.encryption-key');
 
     // Load or generate encryption key
     this.encryptionKey = this.loadOrGenerateKey();
 
-    // Initialize database
-    this.db = new Database(this.dbPath, { create: true });
+    // Initialize database adapter (auto-selects based on environment)
+    this.db = createDbAdapter('tokens', dataDir);
     this.initializeSchema();
 
-    logger.info({ dbPath: this.dbPath }, 'TokenStore initialized');
+    logger.info({ dataDir, dbType: this.db.type }, 'TokenStore initialized');
   }
 
   /**
@@ -95,6 +96,7 @@ export class TokenStore {
    * Initialize database schema
    */
   private initializeSchema(): void {
+    // Create users table
     this.db.run(`
       CREATE TABLE IF NOT EXISTS users (
         user_id TEXT PRIMARY KEY,
@@ -110,20 +112,24 @@ export class TokenStore {
         email TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-      );
+      )
+    `);
 
+    // Create sessions table
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         last_accessed_at INTEGER NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-      CREATE INDEX IF NOT EXISTS idx_users_spotify_id ON users(spotify_user_id);
-      CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at);
+      )
     `);
+
+    // Create indexes
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_spotify_id ON users(spotify_user_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at)`);
   }
 
   /**
@@ -171,7 +177,7 @@ export class TokenStore {
     const encryptedRefresh = this.encrypt(token.refreshToken);
     const now = Date.now();
 
-    const stmt = this.db.prepare(`
+    this.db.run(`
       INSERT INTO users (
         user_id,
         access_token_encrypted, access_token_iv, access_token_tag,
@@ -191,9 +197,7 @@ export class TokenStore {
         display_name = excluded.display_name,
         email = excluded.email,
         updated_at = excluded.updated_at
-    `);
-
-    stmt.run(
+    `, [
       token.userId,
       encryptedAccess.encrypted, encryptedAccess.iv, encryptedAccess.authTag,
       encryptedRefresh.encrypted, encryptedRefresh.iv, encryptedRefresh.authTag,
@@ -203,7 +207,7 @@ export class TokenStore {
       token.email || null,
       token.createdAt || now,
       now
-    );
+    ]);
 
     logger.info({ userId: token.userId, spotifyUserId: token.spotifyUserId }, 'User token saved');
   }
@@ -212,36 +216,36 @@ export class TokenStore {
    * Get user token by userId
    */
   getUserToken(userId: string): UserToken | null {
-    const stmt = this.db.prepare(`
-      SELECT * FROM users WHERE user_id = ?
-    `);
+    const row = this.db.get<Record<string, unknown>>(
+      `SELECT * FROM users WHERE user_id = ?`,
+      [userId]
+    );
 
-    const row = stmt.get(userId) as any;
     if (!row) return null;
 
     try {
       const accessToken = this.decrypt(
-        row.access_token_encrypted,
-        row.access_token_iv,
-        row.access_token_tag
+        row.access_token_encrypted as string,
+        row.access_token_iv as string,
+        row.access_token_tag as string
       );
       const refreshToken = this.decrypt(
-        row.refresh_token_encrypted,
-        row.refresh_token_iv,
-        row.refresh_token_tag
+        row.refresh_token_encrypted as string,
+        row.refresh_token_iv as string,
+        row.refresh_token_tag as string
       );
 
       return {
-        userId: row.user_id,
+        userId: row.user_id as string,
         sessionId: '', // Will be filled by caller if needed
         accessToken,
         refreshToken,
-        expiresAt: row.expires_at,
-        spotifyUserId: row.spotify_user_id,
-        displayName: row.display_name,
-        email: row.email,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at
+        expiresAt: row.expires_at as number,
+        spotifyUserId: row.spotify_user_id as string | undefined,
+        displayName: row.display_name as string | undefined,
+        email: row.email as string | undefined,
+        createdAt: row.created_at as number,
+        updatedAt: row.updated_at as number
       };
     } catch (error) {
       logger.error({ error, userId }, 'Failed to decrypt token');
@@ -255,8 +259,7 @@ export class TokenStore {
    * For production with many users, consider adding a hash index.
    */
   findUserByRefreshToken(refreshToken: string): UserToken | null {
-    const stmt = this.db.prepare(`SELECT user_id FROM users`);
-    const rows = stmt.all() as Array<{ user_id: string }>;
+    const rows = this.db.all<{ user_id: string }>(`SELECT user_id FROM users`);
 
     for (const row of rows) {
       const token = this.getUserToken(row.user_id);
@@ -274,15 +277,14 @@ export class TokenStore {
   linkSession(sessionId: string, userId: string): void {
     const now = Date.now();
 
-    const stmt = this.db.prepare(`
+    this.db.run(`
       INSERT INTO sessions (session_id, user_id, created_at, last_accessed_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         user_id = excluded.user_id,
         last_accessed_at = excluded.last_accessed_at
-    `);
+    `, [sessionId, userId, now, now]);
 
-    stmt.run(sessionId, userId, now, now);
     logger.info({ sessionId, userId }, 'Session linked to user');
   }
 
@@ -290,24 +292,24 @@ export class TokenStore {
    * Get session info
    */
   getSession(sessionId: string): SessionInfo | null {
-    const stmt = this.db.prepare(`
-      SELECT * FROM sessions WHERE session_id = ?
-    `);
+    const row = this.db.get<Record<string, unknown>>(
+      `SELECT * FROM sessions WHERE session_id = ?`,
+      [sessionId]
+    );
 
-    const row = stmt.get(sessionId) as any;
     if (!row) return null;
 
     // Update last accessed timestamp
-    const updateStmt = this.db.prepare(`
-      UPDATE sessions SET last_accessed_at = ? WHERE session_id = ?
-    `);
-    updateStmt.run(Date.now(), sessionId);
+    this.db.run(
+      `UPDATE sessions SET last_accessed_at = ? WHERE session_id = ?`,
+      [Date.now(), sessionId]
+    );
 
     return {
-      sessionId: row.session_id,
-      userId: row.user_id,
-      createdAt: row.created_at,
-      lastAccessedAt: row.last_accessed_at
+      sessionId: row.session_id as string,
+      userId: row.user_id as string,
+      createdAt: row.created_at as number,
+      lastAccessedAt: row.last_accessed_at as number
     };
   }
 
@@ -329,16 +331,15 @@ export class TokenStore {
    * Get all sessions for a user
    */
   getSessionsForUser(userId: string): SessionInfo[] {
-    const stmt = this.db.prepare(`
-      SELECT * FROM sessions WHERE user_id = ? ORDER BY last_accessed_at DESC
-    `);
-
-    const rows = stmt.all(userId) as Array<{
+    const rows = this.db.all<{
       session_id: string;
       user_id: string;
       created_at: number;
       last_accessed_at: number;
-    }>;
+    }>(
+      `SELECT * FROM sessions WHERE user_id = ? ORDER BY last_accessed_at DESC`,
+      [userId]
+    );
 
     return rows.map(row => ({
       sessionId: row.session_id,
@@ -352,8 +353,7 @@ export class TokenStore {
    * Delete a session
    */
   deleteSession(sessionId: string): void {
-    const stmt = this.db.prepare('DELETE FROM sessions WHERE session_id = ?');
-    stmt.run(sessionId);
+    this.db.run('DELETE FROM sessions WHERE session_id = ?', [sessionId]);
     logger.info({ sessionId }, 'Session deleted');
   }
 
@@ -362,12 +362,10 @@ export class TokenStore {
    */
   deleteUser(userId: string): void {
     // Delete sessions first (due to foreign key)
-    const sessionsStmt = this.db.prepare('DELETE FROM sessions WHERE user_id = ?');
-    sessionsStmt.run(userId);
+    this.db.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
 
     // Delete user
-    const userStmt = this.db.prepare('DELETE FROM users WHERE user_id = ?');
-    userStmt.run(userId);
+    this.db.run('DELETE FROM users WHERE user_id = ?', [userId]);
 
     logger.info({ userId }, 'User and sessions deleted');
   }
@@ -379,10 +377,10 @@ export class TokenStore {
     const cutoffTime = Date.now() - maxAgeMs;
 
     // Get user IDs to delete
-    const selectStmt = this.db.prepare(`
-      SELECT user_id FROM users WHERE updated_at < ?
-    `);
-    const expiredUsers = selectStmt.all(cutoffTime) as any[];
+    const expiredUsers = this.db.all<{ user_id: string }>(
+      `SELECT user_id FROM users WHERE updated_at < ?`,
+      [cutoffTime]
+    );
 
     // Delete them
     for (const user of expiredUsers) {
@@ -397,8 +395,12 @@ export class TokenStore {
    * Get all active sessions
    */
   getAllSessions(): SessionInfo[] {
-    const stmt = this.db.prepare('SELECT * FROM sessions ORDER BY last_accessed_at DESC');
-    const rows = stmt.all() as any[];
+    const rows = this.db.all<{
+      session_id: string;
+      user_id: string;
+      created_at: number;
+      last_accessed_at: number;
+    }>('SELECT * FROM sessions ORDER BY last_accessed_at DESC');
 
     return rows.map(row => ({
       sessionId: row.session_id,
@@ -414,16 +416,17 @@ export class TokenStore {
   getStats(): { userCount: number; sessionCount: number; activeTokenCount: number } {
     const now = Date.now();
 
-    const userCount = this.db.prepare('SELECT COUNT(*) as count FROM users').get() as any;
-    const sessionCount = this.db.prepare('SELECT COUNT(*) as count FROM sessions').get() as any;
-    const activeTokenCount = this.db.prepare(
-      'SELECT COUNT(*) as count FROM users WHERE expires_at > ?'
-    ).get(now) as any;
+    const userCount = this.db.get<{ count: number }>('SELECT COUNT(*) as count FROM users');
+    const sessionCount = this.db.get<{ count: number }>('SELECT COUNT(*) as count FROM sessions');
+    const activeTokenCount = this.db.get<{ count: number }>(
+      'SELECT COUNT(*) as count FROM users WHERE expires_at > ?',
+      [now]
+    );
 
     return {
-      userCount: userCount.count,
-      sessionCount: sessionCount.count,
-      activeTokenCount: activeTokenCount.count
+      userCount: userCount?.count ?? 0,
+      sessionCount: sessionCount?.count ?? 0,
+      activeTokenCount: activeTokenCount?.count ?? 0
     };
   }
 

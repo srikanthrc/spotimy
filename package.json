@@ -24,6 +24,7 @@
     "validate:tools": "bun src/__tests__/validate-tools.ts"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.0",
     "@modelcontextprotocol/sdk": "0.6.0",
     "axios": "^1.7.9",
     "pino": "^9.11.0",

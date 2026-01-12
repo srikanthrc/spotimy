@@ -21,6 +21,9 @@ interface SpotifyEnv {
   SPOTIFY_CLIENT_ID: string;
   SPOTIFY_CLIENT_SECRET: string;
   WORKER_URL?: string;
+  // Turso database credentials (secrets)
+  TURSO_DATABASE_URL?: string;
+  TURSO_AUTH_TOKEN?: string;
   // Application branding (from wrangler.jsonc vars)
   APP_DOMAIN?: string;
   APP_NAME?: string;
@@ -72,6 +75,9 @@ export class SpotifyMcpContainer extends Container<SpotifyEnv> {
       // Application branding for OAuth consent screen
       ...(env.APP_DOMAIN && { APP_DOMAIN: env.APP_DOMAIN }),
       ...(env.APP_NAME && { APP_NAME: env.APP_NAME }),
+      // Turso database for persistent storage
+      ...(env.TURSO_DATABASE_URL && { TURSO_DATABASE_URL: env.TURSO_DATABASE_URL }),
+      ...(env.TURSO_AUTH_TOKEN && { TURSO_AUTH_TOKEN: env.TURSO_AUTH_TOKEN }),
     };
     
     console.log("SpotifyMcpContainer initialized with envVars:", Object.keys(this.envVars));
@@ -97,7 +103,7 @@ export default {
   async fetch(request: Request, env: SpotifyEnv): Promise<Response> {
     const url = new URL(request.url);
     
-    // Health check at worker level (before container routing)
+    // Worker-level info endpoint (doesn't require container)
     if (url.pathname === "/") {
       return new Response(JSON.stringify({
         status: "ok",
@@ -107,15 +113,42 @@ export default {
         hasClientId: !!env.SPOTIFY_CLIENT_ID,
         hasClientSecret: !!env.SPOTIFY_CLIENT_SECRET,
         hasWorkerUrl: !!env.WORKER_URL,
+        hasTurso: !!(env.TURSO_DATABASE_URL && env.TURSO_AUTH_TOKEN),
         workerUrl: env.WORKER_URL || "NOT SET",
         endpoints: {
           sse: "/sse",
           health: "/health",
           auth: "/auth?sessionId=<id>",
+          warm: "/warm (pre-warm container)",
         }
       }, null, 2), {
         headers: { "Content-Type": "application/json" }
       });
+    }
+
+    // Pre-warm endpoint - starts container without waiting for full startup
+    if (url.pathname === "/warm") {
+      try {
+        const container = env.SPOTIFY_MCP.get(
+          env.SPOTIFY_MCP.idFromName("default")
+        );
+        // Fire-and-forget health check to wake container
+        container.fetch(new Request(`${url.origin}/health`)).catch(() => {});
+        return new Response(JSON.stringify({
+          status: "warming",
+          message: "Container warm-up initiated",
+        }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({
+          status: "error",
+          message: error instanceof Error ? error.message : String(error),
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
     }
 
     try {
@@ -139,6 +172,23 @@ export default {
         status: 500,
         headers: { "Content-Type": "application/json" }
       });
+    }
+  },
+
+  /**
+   * Scheduled trigger to keep container warm (runs every 5 minutes via cron)
+   */
+  async scheduled(event: ScheduledEvent, env: SpotifyEnv, ctx: ExecutionContext): Promise<void> {
+    console.log("Scheduled warm-up triggered at:", new Date(event.scheduledTime).toISOString());
+    try {
+      const container = env.SPOTIFY_MCP.get(
+        env.SPOTIFY_MCP.idFromName("default")
+      );
+      // Wake the container with a health check
+      const response = await container.fetch(new Request("http://internal/health"));
+      console.log("Warm-up health check:", response.status);
+    } catch (error) {
+      console.error("Scheduled warm-up error:", error);
     }
   }
 };
