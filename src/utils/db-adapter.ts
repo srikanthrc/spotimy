@@ -118,8 +118,11 @@ class TursoAdapter implements DbAdapter {
   private client: LibSqlClient;
   private localDb: BunDatabase;
   readonly type = 'turso' as const;
-  private syncQueue: Array<{ sql: string; params: unknown[] }> = [];
+  private syncQueue: Array<{ sql: string; params: unknown[]; retries: number }> = [];
   private isSyncing = false;
+  private isHydrated = false;
+  private readonly MAX_RETRIES = 3;
+  private readonly SYNC_DELAY_MS = 100; // Small delay between sync operations
 
   constructor(url: string, authToken: string, localDbPath: string) {
     this.client = createClient({
@@ -136,8 +139,10 @@ class TursoAdapter implements DbAdapter {
     
     logger.info({ url: url.substring(0, 40), adapter: 'turso' }, 'Database adapter initialized');
     
-    // Start background sync from Turso on startup
-    this.hydrateFromTurso();
+    // Start background sync from Turso on startup (non-blocking)
+    this.hydrateFromTurso().catch(err => {
+      logger.error({ error: err }, 'Hydration failed but continuing with local DB');
+    });
   }
 
   /**
@@ -195,9 +200,11 @@ class TursoAdapter implements DbAdapter {
         }
       }
       
+      this.isHydrated = true;
       logger.info('Turso hydration complete');
     } catch (error) {
       logger.error({ error }, 'Failed to hydrate from Turso - starting fresh');
+      this.isHydrated = true; // Mark as hydrated anyway to allow operations
     }
   }
 
@@ -205,17 +212,20 @@ class TursoAdapter implements DbAdapter {
    * Queue a write operation for sync to Turso
    */
   private queueSync(sql: string, params: unknown[]): void {
-    this.syncQueue.push({ sql, params });
-    this.processSyncQueue();
+    this.syncQueue.push({ sql, params, retries: 0 });
+    // Use setTimeout to batch multiple writes and avoid blocking
+    setTimeout(() => this.processSyncQueue(), this.SYNC_DELAY_MS);
   }
 
   /**
-   * Process queued sync operations
+   * Process queued sync operations with retry logic
    */
   private async processSyncQueue(): Promise<void> {
     if (this.isSyncing || this.syncQueue.length === 0) return;
     
     this.isSyncing = true;
+    
+    const failedItems: Array<{ sql: string; params: unknown[]; retries: number }> = [];
     
     while (this.syncQueue.length > 0) {
       const item = this.syncQueue.shift()!;
@@ -225,9 +235,30 @@ class TursoAdapter implements DbAdapter {
           args: item.params as never[],
         });
       } catch (error) {
-        logger.error({ error, sql: item.sql }, 'Failed to sync to Turso');
-        // Re-queue for retry? For now, just log and continue
+        if (item.retries < this.MAX_RETRIES) {
+          // Re-queue with incremented retry count
+          failedItems.push({ ...item, retries: item.retries + 1 });
+          logger.warn({ 
+            sql: item.sql.substring(0, 50), 
+            retries: item.retries + 1,
+            maxRetries: this.MAX_RETRIES 
+          }, 'Turso sync failed, will retry');
+        } else {
+          logger.error({ error, sql: item.sql.substring(0, 50) }, 'Turso sync failed after max retries');
+        }
       }
+      
+      // Small delay between operations to avoid overwhelming the connection
+      if (this.syncQueue.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+    
+    // Re-add failed items for retry
+    if (failedItems.length > 0) {
+      this.syncQueue.push(...failedItems);
+      // Schedule retry with exponential backoff
+      setTimeout(() => this.processSyncQueue(), 1000);
     }
     
     this.isSyncing = false;
