@@ -146,64 +146,72 @@ class TursoAdapter implements DbAdapter {
   }
 
   /**
-   * Hydrate local DB from Turso on startup
+   * Hydrate local DB from Turso on startup using batch queries for speed
    */
   private async hydrateFromTurso(): Promise<void> {
+    const startTime = Date.now();
     try {
-      // Get list of tables from Turso
-      const tablesResult = await this.client.execute({
-        sql: "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
-        args: [],
-      });
+      // Use batch query to get all tables and their schemas in one round-trip
+      const batchResult = await this.client.batch([
+        { sql: "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", args: [] },
+      ]);
 
-      for (const row of tablesResult.rows) {
-        const tableName = row.name as string;
-        
-        // Get table schema
-        const schemaResult = await this.client.execute({
-          sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
-          args: [tableName],
-        });
-        
-        if (schemaResult.rows.length > 0) {
-          const createSql = schemaResult.rows[0].sql as string;
-          // Create table locally if not exists
+      const tables = batchResult[0].rows as unknown as Array<{ name: string; sql: string }>;
+      
+      if (tables.length === 0) {
+        this.isHydrated = true;
+        logger.info({ durationMs: Date.now() - startTime }, 'Turso hydration complete (no tables)');
+        return;
+      }
+
+      // Build batch queries for all table data
+      const dataQueries = tables.map(table => ({
+        sql: `SELECT * FROM ${table.name}`,
+        args: [] as never[],
+      }));
+
+      // Fetch all data in one batch
+      const dataResults = await this.client.batch(dataQueries);
+
+      // Process each table
+      for (let i = 0; i < tables.length; i++) {
+        const table = tables[i];
+        const dataResult = dataResults[i];
+
+        // Create table locally if not exists
+        try {
+          this.localDb.run(table.sql);
+        } catch {
+          // Table might already exist
+        }
+
+        if (dataResult.rows.length > 0) {
+          // Get column names
+          const columns = Object.keys(dataResult.rows[0]);
+          const placeholders = columns.map(() => '?').join(', ');
+          const insertSql = `INSERT OR REPLACE INTO ${table.name} (${columns.join(', ')}) VALUES (${placeholders})`;
+          
+          // Use a transaction for bulk inserts (faster)
+          this.localDb.run('BEGIN TRANSACTION');
           try {
-            this.localDb.run(createSql);
-          } catch {
-            // Table might already exist
-          }
-          
-          // Fetch all data from Turso
-          const dataResult = await this.client.execute({
-            sql: `SELECT * FROM ${tableName}`,
-            args: [],
-          });
-          
-          if (dataResult.rows.length > 0) {
-            // Get column names
-            const columns = Object.keys(dataResult.rows[0]);
-            const placeholders = columns.map(() => '?').join(', ');
-            const insertSql = `INSERT OR REPLACE INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
-            
+            const stmt = this.localDb.prepare(insertSql);
             for (const dataRow of dataResult.rows) {
-              const values = columns.map(col => dataRow[col]);
-              try {
-                this.localDb.prepare(insertSql).run(...(values as SqlParams));
-              } catch (e) {
-                logger.error({ error: e, tableName }, 'Error inserting row during hydration');
-              }
+              const values = columns.map(col => (dataRow as Record<string, unknown>)[col]);
+              stmt.run(...(values as SqlParams));
             }
-            
-            logger.info({ tableName, rowCount: dataResult.rows.length }, 'Hydrated table from Turso');
+            this.localDb.run('COMMIT');
+            logger.info({ tableName: table.name, rowCount: dataResult.rows.length }, 'Hydrated table from Turso');
+          } catch (e) {
+            this.localDb.run('ROLLBACK');
+            logger.error({ error: e, tableName: table.name }, 'Error during bulk insert');
           }
         }
       }
       
       this.isHydrated = true;
-      logger.info('Turso hydration complete');
+      logger.info({ durationMs: Date.now() - startTime, tableCount: tables.length }, 'Turso hydration complete');
     } catch (error) {
-      logger.error({ error }, 'Failed to hydrate from Turso - starting fresh');
+      logger.error({ error, durationMs: Date.now() - startTime }, 'Failed to hydrate from Turso - starting fresh');
       this.isHydrated = true; // Mark as hydrated anyway to allow operations
     }
   }
