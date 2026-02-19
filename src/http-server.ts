@@ -189,7 +189,6 @@ class SpotifyHttpServer {
     }
   }
 
-  private server: Server;
   private authManager: AuthManager;
   private clientRegistrationManager: ClientRegistrationManager;
   private api: SpotifyApi;
@@ -203,22 +202,14 @@ class SpotifyHttpServer {
   private playerHandler: PlayerHandler;
   private httpServer!: ReturnType<typeof createServer>;
   private transports = new Map<string, SSEServerTransport>();
+  private sessionServers = new Map<string, Server>(); // Per-session MCP servers
   private sessionIdMapping = new Map<string, string>(); // Maps transport sessionId -> custom sessionId
   private currentSessionId?: string;
 
-  constructor() {
-    this.server = new Server(
-      {
-        name: packageJson.name,
-        version: packageJson.version,
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
-      }
-    );
+  // Client info tracking per session
+  private clientInfoMap = new Map<string, { name: string; version: string }>();
 
+  constructor() {
     this.authManager = new AuthManager();
     // Use the same data directory as AuthManager for consistency
     const dataDir = process.env.TOKEN_STORE_PATH || './data';
@@ -233,15 +224,60 @@ class SpotifyHttpServer {
     this.playlistsHandler = new PlaylistsHandler(this.api);
     this.playerHandler = new PlayerHandler(this.api);
 
-    this.setupToolHandlers();
     this.setupHttpServer();
-
-    this.server.onerror = (error) => logger.error({ error }, 'MCP Error');
 
     process.on('SIGINT', async () => {
       await this.cleanup();
       process.exit(0);
     });
+  }
+
+  /**
+   * Create a new MCP Server instance for a session and set up tool handlers
+   */
+  private createSessionServer(sessionId: string): Server {
+    const server = new Server(
+      {
+        name: packageJson.name,
+        version: packageJson.version,
+      },
+      {
+        capabilities: {
+          tools: {},
+        },
+      }
+    );
+
+    // Set up the oninitialized callback to capture client info
+    server.oninitialized = () => {
+      const clientVersion = server.getClientVersion();
+      if (clientVersion) {
+        this.clientInfoMap.set(sessionId, {
+          name: clientVersion.name,
+          version: clientVersion.version,
+        });
+        logger.info({ 
+          sessionId, 
+          clientName: clientVersion.name, 
+          clientVersion: clientVersion.version 
+        }, 'MCP client initialized');
+      }
+    };
+
+    server.onerror = (error) => logger.error({ error, sessionId }, 'MCP Error');
+
+    // Set up tool handlers for this server
+    this.setupToolHandlersForServer(server);
+
+    return server;
+  }
+
+  /**
+   * Get the client info for a session
+   */
+  private getClientInfo(sessionId?: string): { name: string; version: string } | undefined {
+    if (!sessionId) return undefined;
+    return this.clientInfoMap.get(sessionId);
   }
 
   private getCurrentSessionId(): string | undefined {
@@ -269,8 +305,8 @@ class SpotifyHttpServer {
     return `http://${host}:${port}`;
   }
 
-  private setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+  private setupToolHandlersForServer(server: Server) {
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
       const toolsWithOutputSchema = [
         {
           name: 'get_session_info',
@@ -1225,11 +1261,20 @@ class SpotifyHttpServer {
       };
     };
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         // Set session context for this request
         const sessionId = this.getCurrentSessionId();
         this.api.setSessionId(sessionId);
+
+        // Log tool call with client info
+        const clientInfo = this.getClientInfo(sessionId);
+        logger.info({
+          tool: request.params.name,
+          sessionId,
+          clientName: clientInfo?.name,
+          clientVersion: clientInfo?.version,
+        }, 'Tool call received');
 
         switch (request.params.name) {
           case 'get_session_info': {
@@ -2777,13 +2822,28 @@ class SpotifyHttpServer {
               'New MCP session connected (authenticated)'
             );
 
+            // Create a per-session MCP server
+            const sessionServer = this.createSessionServer(displaySessionId);
+            this.sessionServers.set(displaySessionId, sessionServer);
+            if (clientSessionId && clientSessionId !== displaySessionId) {
+              this.sessionServers.set(clientSessionId, sessionServer);
+            }
+
             // Set up transport event handlers
             transport.onclose = () => {
               this.transports.delete(transport.sessionId);
+              // Clean up session server
+              const server = this.sessionServers.get(displaySessionId);
+              if (server) {
+                server.close();
+                this.sessionServers.delete(displaySessionId);
+              }
               if (clientSessionId) {
                 this.transports.delete(clientSessionId);
                 this.sessionIdMapping.delete(transport.sessionId);
-                this.authStatusCache.delete(clientSessionId); // Clear cached auth status
+                this.authStatusCache.delete(clientSessionId);
+                this.clientInfoMap.delete(clientSessionId);
+                this.sessionServers.delete(clientSessionId);
               }
               logger.info({ sessionId: displaySessionId }, 'MCP session disconnected');
             };
@@ -2792,8 +2852,8 @@ class SpotifyHttpServer {
               logger.error({ error, sessionId: displaySessionId }, 'SSE Error');
             };
 
-            // Connect the MCP server to this transport
-            await this.server.connect(transport);
+            // Connect the per-session MCP server to this transport
+            await sessionServer.connect(transport);
 
           } else if (req.method === 'POST') {
             // Handle incoming messages
@@ -2975,13 +3035,21 @@ class SpotifyHttpServer {
 
     // Close HTTP server
     if (this.httpServer) {
-      return new Promise<void>((resolve) => {
+      await new Promise<void>((resolve) => {
         this.httpServer.close(() => resolve());
       });
     }
 
-    // Close MCP server
-    await this.server.close();
+    // Close all per-session MCP servers
+    for (const [sessionId, server] of this.sessionServers) {
+      try {
+        await server.close();
+      } catch (e) {
+        logger.error({ error: e, sessionId }, 'Error closing session server');
+      }
+    }
+    this.sessionServers.clear();
+    this.clientInfoMap.clear();
 
     // Close auth manager
     this.authManager.close();
